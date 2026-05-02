@@ -21,11 +21,7 @@ import type {
 } from '../account-state/types.js';
 import { parseIso, toIsoZ } from '../utils/jst.js';
 import { textPrefix } from './dedup.js';
-import {
-  computeNextSlot,
-  ensureMinGap,
-  getExistingPublishTimes,
-} from './scheduler.js';
+import { computeNextSlot, ensureMinGap, getExistingPublishTimes } from './scheduler.js';
 import { getCadenceFromAccount } from '../settings/cadence.js';
 
 function nowIso(now?: Date): string {
@@ -37,7 +33,7 @@ function newPublishId(): string {
   return `pub_${ulid().slice(-8).toLowerCase()}`;
 }
 
-export interface EnqueueResult extends PublishItem {}
+export type EnqueueResult = PublishItem;
 
 /**
  * Append a new `PublishItem` to the queue if no active duplicate exists.
@@ -124,9 +120,7 @@ export async function dueItems(opts: {
     const due: PublishItem[] = [];
     const stale: PublishItem[] = [];
     const staleThreshold =
-      staleAfterHours > 0
-        ? new Date(now.getTime() - staleAfterHours * 60 * 60_000)
-        : null;
+      staleAfterHours > 0 ? new Date(now.getTime() - staleAfterHours * 60 * 60_000) : null;
 
     const nextQueue = queue.map((item) => {
       if (item.status !== 'scheduled') return item;
