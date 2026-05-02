@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { handleTargetAdd, handleTargetList, handleTargetRemove } from '../../../src/handlers/index.js';
@@ -12,8 +12,10 @@ afterEach(async () => {
 describe('handleTargetAdd', () => {
   it('account.json に handle が追記される', async () => {
     scaf = await setupHandlerTest();
+    const writeKnowledgeFiles = vi.spyOn(scaf.repo, 'writeKnowledgeFiles');
     const result = await handleTargetAdd(scaf.ctx, { handle: '@tanaka_san' });
     expect(result.content).toContain('@tanaka_san');
+    expect(writeKnowledgeFiles).toHaveBeenCalledTimes(1);
     const persisted = JSON.parse(await readFile(join(scaf.workDir, 'account.json'), 'utf-8')) as {
       x_action_system?: { tracked_targets?: { usernames?: string[] } };
     };
@@ -59,8 +61,10 @@ describe('handleTargetRemove', () => {
         },
       },
     });
+    const writeKnowledgeFiles = vi.spyOn(scaf.repo, 'writeKnowledgeFiles');
     const result = await handleTargetRemove(scaf.ctx, { handle: 'alice' });
     expect(result.content).toContain('@alice');
+    expect(writeKnowledgeFiles).toHaveBeenCalledTimes(1);
     const persisted = JSON.parse(await readFile(join(scaf.workDir, 'account.json'), 'utf-8')) as {
       x_action_system?: { tracked_targets?: { usernames?: string[] } };
     };

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -102,6 +102,7 @@ describe('OnboardingCollector — round-trip', () => {
 
     await runFullWizard(collector, session.id);
 
+    const writeKnowledgeFiles = vi.spyOn(scaf.repo, 'writeKnowledgeFiles');
     const post = await collector.getSession(session.id);
     expect(post?.state).toBe('completed');
     expect(Object.keys(post?.answers ?? {}).length).toBe(ONBOARDING_QUESTION_COUNT);
@@ -109,6 +110,9 @@ describe('OnboardingCollector — round-trip', () => {
     const finalize = await collector.finalize(session.id);
     expect(finalize.account.account_id).toBe('zumi-x');
     expect(finalize.account.display_name).toBe('回答テキスト');
+    expect(finalize.account.x_handle).toBe('zumi_ops');
+    expect(writeKnowledgeFiles).toHaveBeenCalledTimes(1);
+    expect(writeKnowledgeFiles).toHaveBeenCalledWith(finalize.account);
     const written = await scaf.repo.loadAccount();
     expect(written.display_name).toBe('回答テキスト');
     expect(typeof written.voice_profile === 'object' ? (written.voice_profile as { distance_to_reader?: string }).distance_to_reader : '').toBe('balanced');

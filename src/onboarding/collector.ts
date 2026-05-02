@@ -286,6 +286,7 @@ export class OnboardingCollector {
       logger: this.logger,
     });
     await this.repo.saveAccount(merged);
+    await this.repo.writeKnowledgeFiles(merged);
     this.logger.info(
       { session_id: sessionId, account_id: merged.account_id },
       'onboarding_finalized',
@@ -581,6 +582,7 @@ export async function buildAccountFromAnswers(args: {
     ...(args.base as object as AccountJson),
     account_id: args.base.account_id ?? '',
     display_name: stringOf('display_name', args.base.display_name ?? ''),
+    x_handle: stringOf('x_handle', String((args.base as Record<string, unknown>).x_handle ?? '')),
     persona: personaProse || (args.base.persona ?? ''),
     voice_profile: voiceProfile,
     half_focus: stringOf('half_focus', String(args.base.half_focus ?? '')),

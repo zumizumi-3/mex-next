@@ -21,6 +21,7 @@ import { readJson, readJsonRaw, writeJsonAtomic, withStateLock } from './io.js';
 import { AccountJsonSchema, type AccountJson } from './account-schema.js';
 import { StateJsonSchema, type StateJson } from './state-schema.js';
 import { migrateAccount, migrateState, type MigrationResult } from './schema-migration.js';
+import { buildKnowledgeFiles } from './knowledge-builder.js';
 import type { GitSync } from './git-sync.js';
 import type { Logger } from 'pino';
 
@@ -233,6 +234,22 @@ export class AccountRepo {
   async saveAccount(account: AccountJson): Promise<void> {
     await this.writeAccount(account);
     this.syncMutation('chore(account): updated');
+  }
+
+  /**
+   * Generate per-account markdown knowledge files at repo root.
+   *
+   * These files are intentionally committed beside account.json so Codex CLI
+   * and Claude Code auto-load current customer context from their cwd.
+   */
+  async writeKnowledgeFiles(account: AccountJson): Promise<void> {
+    const files = buildKnowledgeFiles(account);
+    await Promise.all(
+      Object.entries(files).map(([name, content]) =>
+        fs.writeFile(join(this.path, name), content, 'utf-8'),
+      ),
+    );
+    this.syncMutation('chore(knowledge): regenerate AGENTS / CLAUDE / persona / brand / targets');
   }
 
   /** Compat alias for writers using `saveState`. */

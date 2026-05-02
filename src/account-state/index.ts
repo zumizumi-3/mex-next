@@ -27,5 +27,6 @@ export {
 } from './state-schema.js';
 export { readJson, readJsonRaw, writeJsonAtomic, withStateLock } from './io.js';
 export { migrateAccount, migrateState, type MigrationResult } from './schema-migration.js';
+export { buildKnowledgeFiles, type KnowledgeFiles } from './knowledge-builder.js';
 export { AccountRepo, type WithStateResult } from './repo.js';
 export { GitSync, type GitSyncOptions, type GitSyncResult } from './git-sync.js';

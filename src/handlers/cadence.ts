@@ -17,6 +17,7 @@ export function makeCadenceSetHandler(profile: Exclude<CadenceProfile, 'custom'>
     _args: HandlerArgs,
   ): Promise<HandlerResult> {
     const cadence = await applyCadenceProfile({ repo: asPostingRepo(ctx.repo), profile });
+    await regenerateKnowledgeBestEffort(ctx);
     return {
       content: `${STATE_EMOJI.ok} 投稿ペースを **${profile}** に切替えました (1日 ${cadence.postsPerDay.min}-${cadence.postsPerDay.max} 本).`,
       tag: `cadence.set.${profile}`,
@@ -29,6 +30,7 @@ export async function handleCadenceSkipToday(
   _args: HandlerArgs,
 ): Promise<HandlerResult> {
   const result = await skipToday({ repo: asPostingRepo(ctx.repo) });
+  await regenerateKnowledgeBestEffort(ctx);
   if (result.cancelledPublishIds.length === 0) {
     return {
       content: `${STATE_EMOJI.cancelled} 今日 (${result.skipDate}) を skip 設定しました。`,
@@ -39,4 +41,16 @@ export async function handleCadenceSkipToday(
     content: `${STATE_EMOJI.cancelled} 今日 (${result.skipDate}) を skip 設定し、予約 ${result.cancelledPublishIds.length} 件を取り消しました。`,
     tag: 'cadence.skip_today.cancelled',
   };
+}
+
+async function regenerateKnowledgeBestEffort(ctx: HandlerContext): Promise<void> {
+  try {
+    const account = await ctx.repo.loadAccount();
+    await ctx.repo.writeKnowledgeFiles(account);
+  } catch (err) {
+    ctx.logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'knowledge_regeneration_failed',
+    );
+  }
 }

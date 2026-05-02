@@ -38,6 +38,7 @@ export async function handleTargetAdd(
     },
   } as typeof account;
   await ctx.repo.saveAccount(next);
+  await regenerateKnowledgeBestEffort(ctx, next);
   return { content: `✅ @${handle} を追跡対象に追加しました。`, tag: 'target.add.ok' };
 }
 
@@ -79,5 +80,20 @@ export async function handleTargetRemove(
     },
   } as typeof account;
   await ctx.repo.saveAccount(next);
+  await regenerateKnowledgeBestEffort(ctx, next);
   return { content: `🛑 @${handle} を追跡対象から外しました。`, tag: 'target.remove.ok' };
+}
+
+async function regenerateKnowledgeBestEffort(
+  ctx: HandlerContext,
+  account: Awaited<ReturnType<HandlerContext['repo']['loadAccount']>>,
+): Promise<void> {
+  try {
+    await ctx.repo.writeKnowledgeFiles(account);
+  } catch (err) {
+    ctx.logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'knowledge_regeneration_failed',
+    );
+  }
 }
