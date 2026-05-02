@@ -1,0 +1,456 @@
+{
+  "account_id": "replace_me",
+  "display_name": "replace_me",
+  "client_mandate": {
+    "objective": "",
+    "primary_audience": [],
+    "avoid": [],
+    "approval_required_for": []
+  },
+  "goal_stack": {
+    "north_star": {
+      "statement": ""
+    },
+    "business_goal": {
+      "primary_outcome": "",
+      "secondary_outcome": ""
+    },
+    "account_goal": {
+      "recognition_goal": "",
+      "trust_goal": "",
+      "relationship_goal": "",
+      "action_goal": ""
+    },
+    "operating_goal": {
+      "current_statement": "",
+      "current_focus": [],
+      "current_constraints": []
+    }
+  },
+  "trigger_policy": {
+    "mode": "semi_auto",
+    "time_based": {
+      "daily_start": true,
+      "post_2h_review": true,
+      "post_24h_review": true,
+      "post_review_hours": [
+        2,
+        24
+      ],
+      "rolling_review_days": 3,
+      "monthly_review": true,
+      "quarterly_review": true
+    },
+    "state_based": {
+      "auto_advance_after_surface_plan": true,
+      "auto_advance_after_measurement_plan": true,
+      "auto_advance_after_research_scan": true,
+      "auto_advance_after_review_pass": true
+    },
+    "content_event_based": {
+      "reply_spike_threshold": 10,
+      "bookmark_spike_threshold": 20,
+      "profile_visit_spike_threshold": 30
+    },
+    "external_change_based": {
+      "x_official_change_check": true,
+      "market_change_check": true,
+      "competitor_pattern_check": true
+    },
+    "manual": {
+      "discord_override": true,
+      "cli_override": true
+    }
+  },
+  "operating_cadence": {
+    "profile": "light",
+    "content_targets": {
+      "original_posts_per_day": {
+        "min": 1,
+        "max": 1
+      },
+      "reply_sessions_per_day": 1,
+      "reply_count_per_day": {
+        "min": 3,
+        "max": 8
+      },
+      "quotes_per_day": {
+        "min": 0,
+        "max": 1
+      },
+      "follow_up_review_hours": [
+        24
+      ]
+    },
+    "review_targets": {
+      "rolling_review_every_days": 7,
+      "monthly_review_every_months": 1,
+      "quarterly_review_every_months": 3
+    },
+    "scheduler": {
+      "daily_start_time": "09:00",
+      "interaction_poll_minutes": 30,
+      "rolling_review_time": "10:00",
+      "monthly_review_day": 1,
+      "monthly_review_time": "09:00",
+      "quarterly_review_months": [
+        1,
+        4,
+        7,
+        10
+      ],
+      "quarterly_review_day": 1,
+      "quarterly_review_time": "09:00"
+    },
+    "hot_zones": [
+      {
+        "start": "06:00",
+        "end": "09:00",
+        "label": "朝"
+      }
+    ]
+  },
+  "execution_defaults": {
+    "use_core_defaults": true,
+    "core_reference_path": "runtime/framework/operating_model.json#default_execution_contract",
+    "override": {
+      "research_candidates": null,
+      "director_active_count": null,
+      "director_reserve_count": null,
+      "editor_initial_briefs": null,
+      "writer_variants": null,
+      "reviewer_decisions": null
+    }
+  },
+  "brand": {
+    "target_reader": [],
+    "problem_space": [],
+    "core_thesis": [],
+    "persona": []
+  },
+  "voice_profile": {
+    "first_person": "",
+    "gender_presentation": "",
+    "character_palette": [],
+    "default_character": "",
+    "distance_to_reader": "",
+    "assertiveness": "",
+    "warmth": "",
+    "humor": "",
+    "emoji_policy": "",
+    "line_break_density": "",
+    "forbidden_tones": []
+  },
+  "authority": {
+    "evidence_sources": [],
+    "authority_borrowing_rules": [],
+    "distance_strategy": ""
+  },
+  "source_assets": {
+    "personal_context_assets": [],
+    "owned_content_assets": [],
+    "offer_assets": [],
+    "account_history_assets": [],
+    "operational_data_assets": [],
+    "external_reference_assets": []
+  },
+  "profile_ingestion": {
+    "enabled": true,
+    "questionnaire_required": true,
+    "asset_ingestion_required": true,
+    "source_backed_fact_required": true,
+    "allow_unconfirmed_persona_inference": false,
+    "conflict_resolution": "human_confirm",
+    "write_targets": [
+      "notes/identity-dossier.md",
+      "account.json.brand",
+      "account.json.authority",
+      "account.json.voice_profile"
+    ]
+  },
+  "reference_model": {
+    "core_playbooks": [
+      "docs/12-operating-rubric.md",
+      "docs/14-embedded-sns-playbook.md"
+    ],
+    "official_x_sources": [],
+    "account_specific_playbook_path": "notes/account-playbook.md"
+  },
+  "diagnosis": {
+    "current_impression": "",
+    "strengths": [],
+    "weaknesses": []
+  },
+  "growth_strategy": {
+    "identity_to_build": "",
+    "primary_shift": "",
+    "content_axes": []
+  },
+  "growth_definition": {
+    "primary_gap": "",
+    "success_means": {
+      "discovery": "",
+      "dwell": "",
+      "problem_connection": "",
+      "solution_expectation": "",
+      "evidence_recognition": "",
+      "conversation": "",
+      "memory": "",
+      "action": ""
+    },
+    "priority_signals": []
+  },
+  "content_skeleton": {
+    "expertise_pillars": [],
+    "authority_pillars": [],
+    "worldview_pillars": [],
+    "human_pillars": [],
+    "conversation_triggers": [],
+    "series_programs": []
+  },
+  "content_design": {
+    "stream_mix": {
+      "problem_language": "",
+      "solution": "",
+      "evidence": "",
+      "worldview": "",
+      "persona": ""
+    }
+  },
+  "x_mechanics": {
+    "account_capabilities": {
+      "supports_long_posts": false,
+      "supports_threads": true
+    },
+    "length_modes": {
+      "short": "",
+      "standard": "",
+      "show_more": "",
+      "thread": ""
+    },
+    "surface_formats": {
+      "single_short": "",
+      "single_standard": "",
+      "single_show_more": "",
+      "thread": "",
+      "bullet_post": "",
+      "bullet_thread": "",
+      "reply_chain": ""
+    },
+    "objective_to_format": {
+      "discovery": "",
+      "dwell": "",
+      "bookmark": "",
+      "empathy": "",
+      "profile_visit": "",
+      "conversation": ""
+    },
+    "format_rules": {
+      "bullet_usage": "",
+      "show_more_rule": "",
+      "thread_rule": "",
+      "reply_hook_rule": "",
+      "profile_visit_rule": "",
+      "bookmark_rule": ""
+    },
+    "reader_actions_priority": []
+  },
+  "operating_rules": {
+    "surface_mix": {
+      "original_posts": "",
+      "replies": "",
+      "quotes": "",
+      "follow_ups": ""
+    },
+    "reply_policy": "",
+    "quote_policy": "",
+    "follow_up_policy": ""
+  },
+  "decision_cycles": {
+    "long_term": "",
+    "mid_term": "",
+    "short_term": "",
+    "post_event": ""
+  },
+  "research_stack": {
+    "market_analyst": {
+      "enabled": true,
+      "outputs": [
+        "notes/audience-map.md",
+        "notes/problem-map.md",
+        "notes/language-notes.md"
+      ]
+    },
+    "topic_researcher": {
+      "enabled": true,
+      "output_dir": "cache/research/",
+      "memo_format": "facts_then_angles"
+    },
+    "x_analyst": {
+      "enabled": true,
+      "outputs": [
+        "notes/x-change-log.md",
+        "notes/improvement-log.md"
+      ]
+    }
+  },
+  "measurement": {
+    "reach": [],
+    "conversation": [],
+    "brand": [],
+    "action": []
+  },
+  "x_action_system": {
+    "ingestion_mode": "manual",
+    "default_mode": "semi_auto",
+    "polling": {
+      "enabled": false,
+      "scan_replies": true,
+      "scan_tracked_posts": true,
+      "create_like_candidates": false,
+      "max_results_per_scan": 10
+    },
+    "actions": {
+      "normal_reply": {
+        "mode": "semi_auto",
+        "priority": "high",
+        "publish_path": "publish_reply",
+        "auto_if": [
+          "low_risk",
+          "simple_question",
+          "brand_safe"
+        ]
+      },
+      "quote_reply": {
+        "mode": "manual",
+        "priority": "medium",
+        "publish_path": "publish_quote_reply",
+        "auto_if": []
+      },
+      "like": {
+        "mode": "semi_auto",
+        "priority": "medium",
+        "publish_path": "like_post",
+        "auto_if": [
+          "tracked_account",
+          "brand_safe"
+        ]
+      },
+      "tracked_post_reply": {
+        "mode": "manual",
+        "priority": "high",
+        "publish_path": "publish_reply",
+        "auto_if": []
+      }
+    },
+    "tracked_targets": {
+      "usernames": [],
+      "keywords": [],
+      "tweet_ids": []
+    },
+    "risk_rules": {
+      "manual_if_contains": [],
+      "manual_if_author_not_whitelisted": false
+    },
+    "reply_generation": {
+      "enabled": true,
+      "full_auto_action_types": [
+        "normal_reply"
+      ],
+      "mention_author": true,
+      "max_length": 220,
+      "simple_question_required_for_full_auto": true,
+      "manual_if_contains": [
+        "税",
+        "法律",
+        "投資",
+        "医療",
+        "政治"
+      ]
+    }
+  },
+  "improvement_system": {
+    "decision_log_path": "notes/decision-log.md",
+    "improvement_log_path": "notes/improvement-log.md",
+    "prediction_required": true,
+    "result_capture_required": true,
+    "single_change_rule": true
+  },
+  "pattern_learning_system": {
+    "enabled": true,
+    "raw_log_path": "cache/analytics/post-patterns.json",
+    "pattern_bank_path": "notes/pattern-bank.md",
+    "anti_pattern_bank_path": "notes/anti-pattern-bank.md",
+    "minimum_log_conditions": [
+      "bookmark_outlier",
+      "reply_outlier",
+      "profile_visit_outlier",
+      "follow_outlier"
+    ]
+  },
+  "continuity_system": {
+    "enabled": true,
+    "use_account_history_assets": true,
+    "use_identity_dossier": true,
+    "require_fact_consistency_check": true,
+    "require_voice_consistency_check": true,
+    "require_narrative_continuity_check": true,
+    "require_novelty_check": true,
+    "minimum_changed_dimensions": 2,
+    "allowed_changed_dimensions": [
+      "problem_angle",
+      "hook",
+      "tension",
+      "evidence_order",
+      "format",
+      "reader_action",
+      "residue_line"
+    ],
+    "conflict_resolution": "human_confirm"
+  },
+  "ai_usage": {
+    "upstream": [],
+    "midstream": [],
+    "downstream": [],
+    "human_final_judgment": []
+  },
+  "post_role_definitions": {},
+  "focus": {
+    "window_label": "",
+    "strengthen": [],
+    "suppress": [],
+    "series": []
+  },
+  "approval_policy": {
+    "low_risk_owner": "",
+    "high_risk_owner": "",
+    "publish_requires_approval": false,
+    "reply_requires_approval": false,
+    "quote_requires_approval": false,
+    "like_requires_approval": false,
+    "tracked_reply_requires_approval": false,
+    "reply_mode": {
+      "generic_replies": "",
+      "case_specific_replies": ""
+    }
+  },
+  "alert_thresholds": {
+    "impressions": {"lower": null, "upper": null},
+    "likes": {"lower": null, "upper": null},
+    "replies": {"lower": null, "upper": null},
+    "reposts": {"lower": null, "upper": null},
+    "bookmarks": {"lower": null, "upper": null},
+    "profile_visits": {"lower": null, "upper": null}
+  },
+  "review_rubric": {
+    "max_length": 280,
+    "min_length": 20,
+    "must_include_any": [],
+    "must_not_include": []
+  },
+  "trait_map": {
+    "default": [],
+    "tags": {},
+    "phase": {}
+  }
+}
