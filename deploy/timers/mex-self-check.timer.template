@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for MeX Next preflight self-check ({ACCOUNT_ID})
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Unit=mex-self-check-{ACCOUNT_ID}.service
+
+[Install]
+WantedBy=timers.target

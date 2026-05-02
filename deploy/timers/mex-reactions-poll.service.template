@@ -8,6 +8,6 @@ Type=oneshot
 Environment=HOME=/root
 EnvironmentFile=/etc/mex/{ACCOUNT_ID}.env
 WorkingDirectory=/opt/mex-next
-ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/main.js --account-id {ACCOUNT_ID} --task reactions-poll
+ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/scripts/cron-reactions-poll.js --account-id {ACCOUNT_ID}
 StandardOutput=journal
 StandardError=journal
