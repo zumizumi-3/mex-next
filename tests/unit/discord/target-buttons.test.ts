@@ -120,6 +120,10 @@ describe('parseTargetCustomId', () => {
       action: 'like',
       sessionId: 'evt-1',
     });
+    expect(parseTargetCustomId('target:like-confirm:evt-1')).toEqual({
+      action: 'like-confirm',
+      sessionId: 'evt-1',
+    });
   });
 
   it('rejects unknown actions', () => {
@@ -134,7 +138,7 @@ describe('parseTargetCustomId', () => {
 });
 
 describe('dispatchTargetButton — deferral', () => {
-  it('defers immediately for like (cheap path) before calling X API', async () => {
+  it('defers immediately for like and renders an ephemeral confirmation before X API', async () => {
     const session = seedSession();
     const repo = makeRepo({ [TARGET_SESSION_KEY]: { 'evt-1': session } });
     const xApi = makeXApi();
@@ -158,10 +162,52 @@ describe('dispatchTargetButton — deferral', () => {
     });
 
     expect(interaction.deferReply).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(['deferReply', 'likeTweet']);
+    expect(order).toEqual(['deferReply']);
+    expect(xApi.likeTweet).not.toHaveBeenCalled();
     expect(interaction.editReply).toHaveBeenCalled();
+    const editCall = interaction.editReply.mock.calls[0]?.[0] as {
+      content: string;
+      components?: unknown[];
+    };
+    expect(editCall.content).toContain('実行しますか');
+    expect(JSON.stringify(editCall.components)).toContain('target:like-confirm:evt-1');
     // Reply should NOT be called when we deferred — that would double-ack.
     expect(interaction.reply).not.toHaveBeenCalled();
+  });
+
+  it('executes like only after the confirm button is pressed', async () => {
+    const session = seedSession();
+    const repo = makeRepo({ [TARGET_SESSION_KEY]: { 'evt-1': session } });
+    const xApi = makeXApi();
+    const bridge = makeBridge();
+    const interaction = makeInteraction('target:like-confirm:evt-1');
+
+    const result = await dispatchTargetButton(interaction as never, {
+      repo: repo as never,
+      bridge,
+      xApi,
+    });
+
+    expect(result.message).toBe('liked');
+    expect(xApi.likeTweet).toHaveBeenCalledTimes(1);
+    expect(interaction.editReply).toHaveBeenCalled();
+  });
+
+  it('executes skip only after the confirm button is pressed', async () => {
+    const session = seedSession();
+    const repo = makeRepo({ [TARGET_SESSION_KEY]: { 'evt-1': session } });
+    const bridge = makeBridge();
+    const interaction = makeInteraction('target:skip-confirm:evt-1');
+
+    const result = await dispatchTargetButton(interaction as never, {
+      repo: repo as never,
+      bridge,
+      xApi: makeXApi(),
+    });
+
+    expect(result.message).toBe('skipped');
+    const state = repo.state[TARGET_SESSION_KEY] as Record<string, { status?: string }>;
+    expect(state['evt-1']?.status).toBe('skipped');
   });
 
   it('defers BEFORE invoking the LLM bridge for quote-suggest', async () => {
@@ -196,7 +242,7 @@ describe('dispatchTargetButton — deferral', () => {
 
   it('routes errors through editReply when deferred', async () => {
     const repo = makeRepo(); // no session seeded
-    const interaction = makeInteraction('target:like:evt-missing');
+    const interaction = makeInteraction('target:like-confirm:evt-missing');
     const bridge = makeBridge();
 
     await dispatchTargetButton(interaction as never, {

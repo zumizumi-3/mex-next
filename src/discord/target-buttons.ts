@@ -36,7 +36,11 @@ import { STATE_EMOJI } from './templates.js';
 
 export type TargetButtonAction =
   | 'like'
+  | 'like-confirm'
+  | 'like-cancel'
   | 'skip'
+  | 'skip-confirm'
+  | 'skip-cancel'
   | 'quote-suggest'
   | 'quote-schedule'
   | 'reply-suggest'
@@ -51,7 +55,11 @@ export interface ParsedTargetCustomId {
 
 const ACTIONS: ReadonlySet<TargetButtonAction> = new Set([
   'like',
+  'like-confirm',
+  'like-cancel',
   'skip',
+  'skip-confirm',
+  'skip-cancel',
   'quote-suggest',
   'quote-schedule',
   'reply-suggest',
@@ -122,6 +130,25 @@ export async function dispatchTargetButton(
 
   try {
     if (parsed.action === 'like') {
+      await respond(interaction, '👍 いいねを実行しますか？', {
+        components: targetConfirmButtons('like', parsed.sessionId) as never,
+      });
+      return { handled: true, message: 'like_confirm_required' };
+    }
+
+    if (parsed.action === 'skip') {
+      await respond(interaction, '⏭ このターゲットを見送りますか？', {
+        components: targetConfirmButtons('skip', parsed.sessionId) as never,
+      });
+      return { handled: true, message: 'skip_confirm_required' };
+    }
+
+    if (parsed.action === 'like-cancel' || parsed.action === 'skip-cancel') {
+      await respond(interaction, '取り消しました。');
+      return { handled: true, message: 'cancelled' };
+    }
+
+    if (parsed.action === 'like-confirm') {
       if (!deps.xApi) {
         await respond(
           interaction,
@@ -138,7 +165,7 @@ export async function dispatchTargetButton(
       return { handled: true, message: 'liked' };
     }
 
-    if (parsed.action === 'skip') {
+    if (parsed.action === 'skip-confirm') {
       await handleTargetSkip({ repo: deps.repo, sessionId: parsed.sessionId });
       await respond(interaction, '⏭ 見送りに記録しました。');
       return { handled: true, message: 'skipped' };
@@ -201,6 +228,28 @@ export async function dispatchTargetButton(
     await respond(interaction, `${STATE_EMOJI.error} 失敗しました: ${detail}`);
     return { handled: true, message: 'error' };
   }
+}
+
+function targetConfirmButtons(action: 'like' | 'skip', sessionId: string): unknown[] {
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 3,
+          label: '実行する',
+          custom_id: `target:${action}-confirm:${sessionId}`,
+        },
+        {
+          type: 2,
+          style: 2,
+          label: 'やめる',
+          custom_id: `target:${action}-cancel:${sessionId}`,
+        },
+      ],
+    },
+  ];
 }
 
 /**

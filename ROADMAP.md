@@ -35,10 +35,10 @@
 
 | WO | 内容 | 担当 | Status |
 |---|---|---|---|
-| **A1** | `state.json` / `account.json` / `content/*` の auto git add+commit+push (best-effort、失敗は escalate) | Codex | TODO |
-| **A2** | onboarding finalize で `AGENTS.md` / `CLAUDE.md` / `persona.md` / `brand.md` / `voice-guide.md` を生成。LLM bridge subprocess を `cwd: account_repo` で起動して自動 load を効かせる | Codex | TODO |
-| **A3** | `templates/account-starter` を整備 (skeleton md 群)。`bootstrap.sh` / `migrate-from-python.sh` に `gh repo create --template` 経路 | Codex | TODO |
-| **A4** | LLM bridge に **Codex CLI provider** 追加 (`LLM_BACKEND=codex` で切替、AGENTS.md auto-load) | Codex | TODO |
+| **A1** | `state.json` / `account.json` / `content/*` の auto git add+commit+push (best-effort、失敗は escalate) | Codex | done |
+| **A2** | onboarding finalize で `AGENTS.md` / `CLAUDE.md` / `persona.md` / `brand.md` / `voice-guide.md` を生成。LLM bridge subprocess を `cwd: account_repo` で起動して自動 load を効かせる | Codex | done |
+| **A3** | `templates/account-starter` を整備 (skeleton md 群)。`bootstrap.sh` / `migrate-from-python.sh` に `gh repo create --template` 経路 | Codex | done |
+| **A4** | LLM bridge に **Codex CLI provider** 追加 (`LLM_BACKEND=codex` で切替、AGENTS.md auto-load) | Codex | done |
 
 ### account_repo 構造 (合意済)
 
@@ -67,6 +67,8 @@
 | **B3** | 顧客の Discord 修正コメント / 修正再生成を `exemplars/*.md` に flatten 出力 (人間が読める学習ログ) |
 | **B4** | bot 起動時に AGENTS.md / persona.md の整合性 check (preflight に追加) |
 
+Status: done
+
 ## Phase C — operator 体験 / ガバナンス (落ち着いてから)
 
 | WO | 内容 |
@@ -75,6 +77,8 @@
 | **C2** | データ ownership ドキュメント化 (顧客が repo を移管 / 削除可能) |
 | **C3** | multi-account の横断 retro / brand 学習共有 (operator 専用) |
 
+Status: done
+
 ## Phase D — 細かい polish (随時)
 
 - ESLint v9 flat config 移行 (現在 husky pre-commit が deprecated 警告)
@@ -82,6 +86,8 @@
 - conversation lock の queuedCount の Discord visible 化
 - target button: 確認 modal (誤クリック防御)
 - thread name の grapheme-safe truncate を test fixture に追加
+
+Status: done
 
 ## Workflow
 
@@ -102,3 +108,23 @@
 
 ### Phase 0 (foundation, completed)
 WO-FRESH-1 〜 13、WO-MVP-CRON、WO-PARITY-{ONBOARD,CONTENT,DISCORD}、WO-QUALITY-{INFRA,RUNTIME}、WO-AUDIT-1〜6、pending-confirmation、Q4 lenient resolve。
+
+### Phase A (GitHub knowledge layer, completed)
+account_repo 構造、knowledge files、LLM subprocess cwd、starter template、Codex CLI provider 経路。
+
+### Phase B (recovery + Actions cron + learning loop, completed)
+recover.sh、Actions cron、exemplars flatten、起動時 preflight 整合性 check。
+
+### Phase C (operator governance, completed)
+operator org 集約方針、data ownership docs、cross-account report。
+
+### Phase D (UX polish, completed)
+ESLint flat config、bootstrap unattended、queuedCount visible、target confirm、grapheme-safe thread-name fixtures。
+
+## Phase E (将来)
+
+- operator dashboard CLI: registry 横断 status / journal shortcut / report history viewer
+- Slack 連携: operator alert の optional sink
+- 複数 LLM A/B: account 単位で backend と prompt variant を比較
+- report の HTML/dashboard 化: cross-account report の時系列比較
+- GitHub repo health monitor: stale Actions / sync failure / permission drift の定期検出

@@ -45,8 +45,14 @@ export const PROGRESS_TEMPLATES = {
   cancelled: `${STATE_EMOJI.cancelled} 中断`,
 } as const;
 
-export const BUSY_REPLY_TEMPLATE = `${STATE_EMOJI.busy} 前の処理がまだ動いています。終わるのを待ちます。`;
 export const OVERLOAD_REPLY_TEMPLATE = `${STATE_EMOJI.busy} 現在処理中のメッセージが多いので少々お待ちください。前の処理が終わってからもう一度送ってください。`;
+
+export function busyReplyTemplate(opts: { queuedCount: number }): string {
+  if (opts.queuedCount <= 0) {
+    return `${STATE_EMOJI.busy} 前のメッセージを処理中です。少し待ってください。`;
+  }
+  return `${STATE_EMOJI.busy} 前のメッセージを処理中です (待ち列 ${opts.queuedCount} 件)。順番に対応します。`;
+}
 
 /** Standard button labels and styles, kept consistent across modules. */
 export const BUTTON_LABELS = {

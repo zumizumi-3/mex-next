@@ -307,7 +307,6 @@ const isMain = (() => {
 
 if (isMain) {
   main().catch((error: unknown) => {
-    // eslint-disable-next-line no-console
     console.error('[cron-periodic-retro] fatal:', error);
     process.exit(1);
   });

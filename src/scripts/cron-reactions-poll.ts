@@ -292,7 +292,6 @@ const isMain = (() => {
 
 if (isMain) {
   main().catch((error: unknown) => {
-    // eslint-disable-next-line no-console
     console.error('[cron-reactions-poll] fatal:', error);
     process.exit(1);
   });

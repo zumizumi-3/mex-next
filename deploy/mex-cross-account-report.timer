@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for MeX Next cross-account report (operator)
+
+[Timer]
+OnCalendar=*-*-01 09:30:00 Asia/Tokyo
+RandomizedDelaySec=5min
+Persistent=true
+Unit=mex-cross-account-report.service
+
+[Install]
+WantedBy=timers.target

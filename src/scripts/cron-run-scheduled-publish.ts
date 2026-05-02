@@ -318,7 +318,6 @@ const isMain = (() => {
 
 if (isMain) {
   main().catch((error: unknown) => {
-    // eslint-disable-next-line no-console
     console.error('[cron-run-scheduled-publish] fatal:', error);
     process.exit(1);
   });

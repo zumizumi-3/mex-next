@@ -118,7 +118,6 @@ async function waitReady(
 }
 
 main().catch((error: unknown) => {
-  // eslint-disable-next-line no-console
   console.error('cron-morning-digest fatal:', error);
   process.exit(1);
 });

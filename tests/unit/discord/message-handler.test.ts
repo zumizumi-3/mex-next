@@ -46,11 +46,62 @@ describe('sliceGraphemes', () => {
     }
   });
 
+  it('slices emoji-mixed text at the 95 grapheme boundary', () => {
+    const text = `${'あ'.repeat(94)}🎉tail`;
+    const sliced = sliceGraphemes(text, 95);
+    expect(graphemeCount(sliced)).toBe(95);
+    expect(sliced.endsWith('🎉')).toBe(true);
+  });
+
+  it('slices CJK text at the 95 grapheme boundary', () => {
+    const text = `${'漢'.repeat(95)}字`;
+    const sliced = sliceGraphemes(text, 95);
+    expect(graphemeCount(sliced)).toBe(95);
+    expect(sliced).toBe('漢'.repeat(95));
+  });
+
+  it('does not split a ZWJ sequence at the 95 grapheme boundary', () => {
+    const family = '👨‍👩‍👧';
+    const text = `${'a'.repeat(94)}${family}tail`;
+    const sliced = sliceGraphemes(text, 95);
+    expect(graphemeCount(sliced)).toBe(95);
+    expect(sliced.endsWith(family)).toBe(true);
+    expect(sliced).not.toContain(`${family.slice(0, -1)}tail`);
+  });
+
+  it('does not split a surrogate pair at the 95 grapheme boundary', () => {
+    const text = `${'b'.repeat(94)}🎉tail`;
+    const sliced = sliceGraphemes(text, 95);
+    expect(graphemeCount(sliced)).toBe(95);
+    expect(sliced.endsWith('🎉')).toBe(true);
+    expect(hasUnpairedSurrogate(sliced)).toBe(false);
+  });
+
   it('returns empty for non-positive limits', () => {
     expect(sliceGraphemes('hello', 0)).toBe('');
     expect(sliceGraphemes('hello', -1)).toBe('');
   });
 });
+
+function graphemeCount(value: string): number {
+  const segmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' });
+  return Array.from(segmenter.segment(value)).length;
+}
+
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      const prev = value.charCodeAt(i - 1);
+      if (prev < 0xd800 || prev > 0xdbff) return true;
+    }
+  }
+  return false;
+}
 
 interface FakeMessage {
   content?: string;

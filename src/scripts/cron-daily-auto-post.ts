@@ -309,7 +309,6 @@ const isMain = (() => {
 
 if (isMain) {
   main().catch((error: unknown) => {
-    // eslint-disable-next-line no-console
     console.error('[cron-daily-auto-post] fatal:', error);
     process.exit(1);
   });

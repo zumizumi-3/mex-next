@@ -39,7 +39,7 @@ import { TurnCancelledError } from '../conversation/turn-cancellation.js';
 import { buildTurnMessage, hasTurnMessageContent } from '../conversation/turn-message.js';
 import { runConversationTurn, type ConversationRunner } from '../conversation/turn-orchestrator.js';
 import { createProgressIndicator, type ProgressChannel } from './progress-indicator.js';
-import { BUSY_REPLY_TEMPLATE, OVERLOAD_REPLY_TEMPLATE } from './templates.js';
+import { busyReplyTemplate, OVERLOAD_REPLY_TEMPLATE } from './templates.js';
 import type { AutoUnarchiveManager, ThreadLike } from './thread-lifecycle.js';
 
 export interface DiscordRoutingConfig {
@@ -110,7 +110,7 @@ export async function handleDiscordMessage(
   const lockState = getConversationLockState(conversationKey);
   if (lockState.running) {
     log?.info({ conversationKey, queuedCount: lockState.queuedCount }, 'message_busy_dropped');
-    await sendSafe(message.channel, BUSY_REPLY_TEMPLATE, log);
+    await sendSafe(message.channel, busyReplyTemplate({ queuedCount: lockState.queuedCount }), log);
     return;
   }
 

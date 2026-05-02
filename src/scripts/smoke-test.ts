@@ -272,7 +272,6 @@ const isMain = (() => {
 
 if (isMain) {
   main().catch((error: unknown) => {
-    // eslint-disable-next-line no-console
     console.error('[smoke-test] fatal:', error);
     process.exit(1);
   });
