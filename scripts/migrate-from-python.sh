@@ -33,8 +33,8 @@ log()    { echo ""; echo "[$(date -Iseconds)] ▶ $*"; }
 ok()     { echo "  ✅ $*"; }
 warn()   { echo "  ⚠  $*"; }
 fail()   { echo "  ❌ $*" >&2; exit 1; }
-prompt() { read -rp "  ❯ $1 " "$2"; }
-prompt_default() { read -rp "  ❯ $1 [$2] " "$3"; eval "$3=\"\${$3:-$2}\""; }
+prompt() { read -rp "  ❯ $1 " "$2" </dev/tty; }
+prompt_default() { read -rp "  ❯ $1 [$2] " "$3" </dev/tty; eval "$3=\"\${$3:-$2}\""; }
 have()   { command -v "$1" >/dev/null 2>&1; }
 
 # ------------------------------------------------------------------ args
