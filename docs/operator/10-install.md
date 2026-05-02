@@ -1,0 +1,192 @@
+## install / bootstrap 手順
+
+> **対象読者**: 新しい VPS に MeX Next を立てる operator
+> **前提**: Ubuntu 22.04 LTS / Debian 12 系の VPS、root 権限あり
+> **読了時間**: 約 15 分
+
+VPS 1 台に対して **1 account** を載せる前提です。複数 account を 1 VPS に同居させたい場合は [40-multi-account.md](./40-multi-account.md) を参照。
+
+## 1. 全体フロー
+
+```mermaid
+flowchart TB
+    A[VPS 用意] --> B[install.sh<br/>共通基盤]
+    B --> C[Discord Dev Portal<br/>bot 作成]
+    C --> D[X Developer Portal<br/>API key]
+    D --> E[Doppler workspace<br/>secrets 投入]
+    E --> F[bootstrap.sh<br/>account 個別]
+    F --> G[systemctl start mex-bot]
+```
+
+各ステップ:
+
+| step | 概要 | 所要時間 |
+| --- | --- | --- |
+| install.sh | Node 20 + Doppler CLI + gh CLI + Claude Code | 5-10 分 |
+| Discord Dev Portal | bot 作成 + Privileged Intents | 5 分 ([11-discord-setup.md](./11-discord-setup.md)) |
+| X Developer Portal | API tier 申請 + key 発行 | 5-30 分 ([13-x-api-setup.md](./13-x-api-setup.md)) |
+| Doppler | project / config / token | 5 分 ([12-doppler-setup.md](./12-doppler-setup.md)) |
+| bootstrap.sh | account repo clone + systemd unit | 5 分 |
+
+## 2. 事前準備チェックリスト
+
+- [ ] VPS にログインできる
+- [ ] sudo 権限がある
+- [ ] Discord アカウント (operator 用)
+- [ ] X (Twitter) アカウント (顧客用)
+- [ ] Anthropic API key (operator が払う、claude-code は別途 OAuth)
+- [ ] GitHub token (account repo を private で管理)
+
+## 3. install.sh の使い方
+
+共通基盤 (Node 20 / Doppler / gh / Claude Code) を入れます。
+
+```bash
+# VPS 上で root として
+curl -fsSL https://raw.githubusercontent.com/zumizumi-3/mex-next/main/scripts/install.sh | bash
+```
+
+入るもの:
+
+| tool | version | 用途 |
+| --- | --- | --- |
+| Node.js | 20 LTS | bot ランタイム |
+| npm | latest | 依存管理 |
+| Doppler CLI | latest | secrets fetch |
+| gh CLI | latest | account repo 操作 |
+| Claude Code | latest | claude-code provider |
+| systemd | (default) | service 管理 |
+
+完了後に `node --version` / `doppler --version` / `gh --version` / `claude --version` で確認。
+
+## 4. Discord / X / Doppler の事前準備
+
+このタイミングで Discord Dev Portal / X Developer Portal / Doppler workspace を作っておきます。詳細は各ページに分けています。
+
+- [11-discord-setup.md](./11-discord-setup.md)
+- [13-x-api-setup.md](./13-x-api-setup.md)
+- [12-doppler-setup.md](./12-doppler-setup.md)
+
+ここまでで準備するもの:
+
+```text
+DISCORD_BOT_TOKEN          (Discord Application bot token)
+DISCORD_APPLICATION_ID     (slash command 登録用)
+DISCORD_GUILD_ID           (顧客の Discord server ID)
+ANTHROPIC_API_KEY          (operator のキー)
+X_API_CONSUMER_KEY         (X Developer Portal、tier=Basic 推奨)
+X_API_CONSUMER_SECRET
+X_API_ACCESS_TOKEN         (顧客の OAuth1.0a token)
+X_API_ACCESS_TOKEN_SECRET
+GITHUB_TOKEN               (account repo 管理用 PAT)
+```
+
+これらは **Doppler に投入** し、VPS には DOPPLER_TOKEN だけ置きます。
+
+## 5. bootstrap.sh の使い方
+
+account 個別の整備をします。
+
+```bash
+sudo /opt/mex-next/scripts/bootstrap.sh \
+  --account-id zumi-x \
+  --doppler-token dp.st.prd.xxxxx \
+  --account-repo-url https://github.com/<owner>/<account>-x-ops \
+  --customer-discord-user-id 123456789012345678 \
+  --operator-discord-user-id 234567890123456789
+```
+
+引数:
+
+| flag | 例 | 意味 |
+| --- | --- | --- |
+| `--account-id` | zumi-x | kebab-case の識別子 |
+| `--doppler-token` | dp.st.prd.xxxx | service token (read-only) |
+| `--account-repo-url` | https://github.com/.../-x-ops | GitHub の private repo URL |
+| `--customer-discord-user-id` | 数字 18-19 桁 | 顧客の Discord user ID |
+| `--operator-discord-user-id` | 数字 18-19 桁 | operator の ID (escalate 先) |
+
+bootstrap.sh がやること:
+
+```mermaid
+flowchart LR
+    A[1. account repo clone] --> B[2. /etc/mex/<id>.env 作成]
+    B --> C[3. systemd unit 配置]
+    C --> D[4. mex-bot.service の ExecStart 書き換え]
+    D --> E[5. systemctl enable + start]
+```
+
+配置先:
+
+```text
+/srv/mex/<account-id>-x-ops      # account repo (chown: mex)
+/etc/mex/<account-id>.env        # DOPPLER_TOKEN / ACCOUNT_ID / ACCOUNT_REPO
+/etc/systemd/system/mex-bot.service             # bot
+/etc/systemd/system/mex-self-update.service
+/etc/systemd/system/mex-self-update.timer
+/etc/systemd/system/mex-daily-<id>.timer        # 朝 07:00
+/etc/systemd/system/mex-weekly-retro-<id>.timer # 月曜 07:00
+/etc/systemd/system/mex-reactions-poll-<id>.timer # 30min
+/etc/systemd/system/mex-publish-<id>.timer      # 5min
+```
+
+## 6. 確認
+
+```bash
+# bot 起動確認
+sudo systemctl status mex-bot
+sudo journalctl -u mex-bot -n 50
+
+# Discord で bot のステータスが緑か
+# 顧客 channel に「こんにちは。MeX bot です」が届くか
+```
+
+## 7. slash command 登録
+
+bootstrap.sh 内で自動実行されますが、手動でも可能。
+
+```bash
+sudo -u mex node /opt/mex-next/dist/scripts/register-slash.js \
+  --doppler-token dp.st.prd.xxxxx \
+  --guild-id 1234567890
+```
+
+guild-scoped は反映が即時。global は 1 時間程度かかります。
+
+## 8. 自動更新 (self-update)
+
+`mex-self-update.timer` が 30 分間隔で git pull + npm install + npm run build + restart します。
+
+```text
+target: /opt/mex-next (operator-managed)
+trigger: timer 30min
+behavior: dirty なら skip / pull 失敗で alert
+```
+
+ref pin は `deploy/mex-core-desired.json` で account 単位指定 (default `main`)。
+
+## 9. 削除手順
+
+account を畳む時:
+
+```bash
+sudo systemctl stop mex-bot mex-daily-<id>.timer mex-weekly-retro-<id>.timer \
+                   mex-reactions-poll-<id>.timer mex-publish-<id>.timer
+sudo systemctl disable mex-bot ...
+sudo rm /etc/systemd/system/mex-bot.service \
+        /etc/systemd/system/mex-daily-<id>.timer \
+        ...
+sudo rm -rf /srv/mex/<account-id>-x-ops
+sudo rm /etc/mex/<account-id>.env
+sudo systemctl daemon-reload
+```
+
+GitHub repo / Doppler project は別途手動で削除 (誤削除防止のため bootstrap.sh では消さない)。
+
+## 10. 関連 docs
+
+- [11-discord-setup.md](./11-discord-setup.md)
+- [12-doppler-setup.md](./12-doppler-setup.md)
+- [13-x-api-setup.md](./13-x-api-setup.md)
+- [20-runbook.md](./20-runbook.md)
+- [50-troubleshooting.md](./50-troubleshooting.md)
