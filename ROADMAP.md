@@ -28,34 +28,52 @@
 - judgment events (secret redaction)
 - migrate-from-python.sh (一発入れ替え、Python lock cleanup 済)
 
-## Phase A — GitHub Tier 1 (即効、各 1-2 日)
+## Phase A — GitHub = 知識層 / Agent 指示層 (ユーザ展開ベース)
 
-**目的**: state を git に乗せて全変更を可視化、復旧をクリーンに、新 account 立ち上げを 1 コマンド化する。
+**核**: Discord は interface (会話)、GitHub は **persistent knowledge + AGENTS.md / CLAUDE.md による per-account 指示**。
+顧客は GitHub UI を触らない。bot の LLM subprocess (Claude Code / Codex CLI) が account_repo を cwd として起動 → AGENTS.md / CLAUDE.md / persona.md / brand.md を **自動 load**。
 
 | WO | 内容 | 担当 | Status |
 |---|---|---|---|
-| **A1** | `state.json` / `account.json` / `content/*` の auto commit + push | Codex | TODO |
-| **A2** | Draft post → GitHub PR フロー (PR merge = schedule、comment = revise hint) | Codex | TODO |
-| **A3** | `gh repo create --template` で starter から新 account 立ち上げ | Codex | TODO |
-| **A4** | LLM bridge に **Codex CLI provider** 追加 (`LLM_BACKEND=codex` で切替) | Codex | TODO |
+| **A1** | `state.json` / `account.json` / `content/*` の auto git add+commit+push (best-effort、失敗は escalate) | Codex | TODO |
+| **A2** | onboarding finalize で `AGENTS.md` / `CLAUDE.md` / `persona.md` / `brand.md` / `voice-guide.md` を生成。LLM bridge subprocess を `cwd: account_repo` で起動して自動 load を効かせる | Codex | TODO |
+| **A3** | `templates/account-starter` を整備 (skeleton md 群)。`bootstrap.sh` / `migrate-from-python.sh` に `gh repo create --template` 経路 | Codex | TODO |
+| **A4** | LLM bridge に **Codex CLI provider** 追加 (`LLM_BACKEND=codex` で切替、AGENTS.md auto-load) | Codex | TODO |
 
-## Phase B — GitHub Tier 2 (1 週)
+### account_repo 構造 (合意済)
+
+```
+/srv/mex/<account>-ops/
+├── AGENTS.md         ← Codex 用 (auto-load)
+├── CLAUDE.md         ← Claude Code 用 (auto-load)
+├── persona.md        ← 「誰」
+├── brand.md          ← 「声」「NG」
+├── voice-guide.md    ← 文体例
+├── targets.md        ← 追跡 target 解説
+├── exemplars/        ← 修正前後の学習ログ (md)
+├── retros/           ← 月次以上の振り返り結論 (md)
+├── decisions/        ← 大きな運用判断ログ (md)
+├── content/<id>/{content,draft}.json    ← 既存 (machine state)
+├── account.json + state.json            ← 既存 (machine state)
+└── README.md         ← 目次 / 顧客向け説明
+```
+
+## Phase B — 復旧 + Actions cron + 学習ループ (1 週)
 
 | WO | 内容 |
 |---|---|
-| **B1** | VPS 障害復旧フロー: `scripts/recover.sh <account>` で github clone + systemd 再構築 |
-| **B2** | GitHub Actions で daily / weekly retro cron 化 (VPS down でも動く) |
-| **B3** | gh-pages で顧客ダッシュボード (post 履歴 / retro 結果 / cadence) |
-| **B4** | 顧客の修正 PR comment を edit-diff exemplar に学習 |
+| **B1** | `scripts/recover.sh <account>` で github clone + systemd 再構築 |
+| **B2** | GitHub Actions で weekly retro / monthly retro / phase-questionnaire を cron 化 |
+| **B3** | 顧客の Discord 修正コメント / 修正再生成を `exemplars/*.md` に flatten 出力 (人間が読める学習ログ) |
+| **B4** | bot 起動時に AGENTS.md / persona.md の整合性 check (preflight に追加) |
 
-## Phase C — GitHub Tier 3 (運用 / ガバナンス)
+## Phase C — operator 体験 / ガバナンス (落ち着いてから)
 
 | WO | 内容 |
 |---|---|
-| **C1** | Codespaces で account.json を schema validation 付き編集 |
-| **C2** | GitHub App ベース OAuth (PAT 廃止) |
-| **C3** | Operator Org に全 account repo 集約 + 横断ダッシュボード |
-| **C4** | データ ownership 明文化 (顧客の repo = 顧客所有、export / 削除権) |
+| **C1** | Operator Org に全 account repo を集約 (`zumizumi-3/<account>-ops` を operator org に fork or transfer) |
+| **C2** | データ ownership ドキュメント化 (顧客が repo を移管 / 削除可能) |
+| **C3** | multi-account の横断 retro / brand 学習共有 (operator 専用) |
 
 ## Phase D — 細かい polish (随時)
 
