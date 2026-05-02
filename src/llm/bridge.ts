@@ -20,6 +20,8 @@
  * sites do not branch by provider — only by kind.
  */
 
+import { CircuitBreaker, CircuitOpenError } from '../utils/circuit-breaker.js';
+import { retryWithBackoff, type RetryOptions } from '../utils/retry.js';
 import type { LlmKind, LlmProviderName } from './kinds.js';
 import {
   KIND_CACHE_DEFAULT,
@@ -76,6 +78,70 @@ export interface LlmBridgeConfig {
   claudeCode: LlmProvider;
   /** Optional: override KIND_PROVIDER for tests / experimental routing. */
   providerOverrides?: Partial<Record<LlmKind, LlmProviderName>>;
+  /**
+   * Optional: enable retry + circuit-breaker around provider calls.
+   *
+   * When provided, every call is wrapped with:
+   *   1) circuit breaker (fail fast when provider has been failing)
+   *   2) retryWithBackoff (3 attempts default, longer for 429)
+   *
+   * The circuit-breaker is shared across BOTH providers — when LLM is
+   * generally unhealthy we want every kind to fail fast, not branch by
+   * provider. Pass `undefined` to disable for tests.
+   */
+  resilience?: LlmResilienceConfig;
+  /**
+   * Optional escalation hook fired when the circuit opens. Use to
+   * surface "LLM 一時的に利用不可" to the operator channel.
+   */
+  onCircuitOpen?: (error: CircuitOpenError, ctx: { kind: LlmKind }) => void;
+}
+
+/** Per-bridge retry / circuit policy. */
+export interface LlmResilienceConfig {
+  /** Total attempts including the first. Default 3. */
+  attempts?: number;
+  /** Initial backoff. Default 500ms. */
+  initialDelayMs?: number;
+  /** Cap. Default 30s. */
+  maxDelayMs?: number;
+  /** Failures in a row that trip the breaker. Default 5. */
+  failureThreshold?: number;
+  /** Open → half-open after this many ms. Default 30s. */
+  resetTimeoutMs?: number;
+  /** Half-open probe budget. Default 1. */
+  halfOpenAttempts?: number;
+}
+
+/**
+ * Inspect an error and decide if it's worth retrying.
+ *
+ * - 401 / 403 → never retry (caller has wrong creds, won't fix itself).
+ * - 429       → always retry (with the longer initial backoff).
+ * - 5xx       → retry.
+ * - Network / timeout / unknown → retry.
+ *
+ * Exposed so the X API client can reuse the same policy verbatim.
+ */
+export function defaultLlmShouldRetry(error: unknown): boolean {
+  const status = extractStatusCode(error);
+  if (status === 401 || status === 403) return false;
+  if (status === 400 || status === 404) return false;
+  return true;
+}
+
+/** Heavier initial backoff for kinds that 429ed. */
+export function isRateLimitError(error: unknown): boolean {
+  return extractStatusCode(error) === 429;
+}
+
+function extractStatusCode(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const e = error as { status?: unknown; statusCode?: unknown; code?: unknown };
+  if (typeof e.status === 'number') return e.status;
+  if (typeof e.statusCode === 'number') return e.statusCode;
+  if (typeof e.code === 'number') return e.code;
+  return undefined;
 }
 
 /**
@@ -86,6 +152,14 @@ export interface LlmBridgeConfig {
  * single small interface — they don't know about the dispatch.
  */
 export function createBridge(config: LlmBridgeConfig): LlmProvider {
+  const breaker = config.resilience
+    ? new CircuitBreaker<LlmResponse>({
+        failureThreshold: config.resilience.failureThreshold ?? 5,
+        resetTimeoutMs: config.resilience.resetTimeoutMs ?? 30_000,
+        halfOpenAttempts: config.resilience.halfOpenAttempts ?? 1,
+      })
+    : null;
+
   return {
     async call(opts: LlmCallOptions): Promise<LlmResponse> {
       const overridden = config.providerOverrides?.[opts.kind];
@@ -93,8 +167,43 @@ export function createBridge(config: LlmBridgeConfig): LlmProvider {
       const provider =
         providerName === 'anthropic' ? config.anthropic : config.claudeCode;
       const filled = fillDefaults(opts);
-      return provider.call(filled);
+
+      const invoke = (): Promise<LlmResponse> => provider.call(filled);
+
+      if (!config.resilience) {
+        return invoke();
+      }
+
+      const retryOpts = buildLlmRetryOptions(config.resilience);
+      const attempt = (): Promise<LlmResponse> =>
+        retryWithBackoff(invoke, retryOpts);
+
+      if (!breaker) {
+        return attempt();
+      }
+      try {
+        return await breaker.execute(attempt);
+      } catch (err) {
+        if (err instanceof CircuitOpenError) {
+          config.onCircuitOpen?.(err, { kind: opts.kind });
+        }
+        throw err;
+      }
     },
+  };
+}
+
+function buildLlmRetryOptions(cfg: LlmResilienceConfig): RetryOptions {
+  const attempts = cfg.attempts ?? 3;
+  const initialDelayMs = cfg.initialDelayMs ?? 500;
+  const maxDelayMs = cfg.maxDelayMs ?? 30_000;
+  return {
+    attempts,
+    initialDelayMs,
+    maxDelayMs,
+    backoffFactor: 2,
+    shouldRetry: (error) => defaultLlmShouldRetry(error),
+    onRetry: () => undefined,
   };
 }
 

@@ -14,6 +14,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadConfig, type AppConfig } from './config.js';
 import { createLogger } from './observability/logger.js';
+import { JudgmentEventStream } from './observability/judgment-events.js';
 import { createDiscordClient } from './discord/client.js';
 import { handleDiscordMessage } from './discord/message-handler.js';
 import { handleDiscordInteraction } from './discord/interactions.js';
@@ -35,12 +36,13 @@ import { XApiClient } from './x-api/client.js';
 import { buildHandlers, type HandlerContext } from './handlers/index.js';
 import { collectInboundReplies } from './posting/collectors/index.js';
 import type { LlmProviderLike } from './posting/collectors/types.js';
+import { GracefulShutdown, bindShutdownSignals } from './lifecycle/graceful-shutdown.js';
 
-interface Disposable {
-  dispose(): Promise<void> | void;
-}
-
-function buildLlmBridge(config: AppConfig): LlmProvider {
+function buildLlmBridge(
+  config: AppConfig,
+  log: ReturnType<typeof createLogger>,
+  discordPoster: DiscordPosterImpl,
+): LlmProvider {
   const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
   const anthropic = createAnthropicSdkProvider({
     messages: {
@@ -48,10 +50,37 @@ function buildLlmBridge(config: AppConfig): LlmProvider {
     },
   });
   const claudeCode = createClaudeCodeProvider({});
-  return createBridge({ anthropic, claudeCode });
+  return createBridge({
+    anthropic,
+    claudeCode,
+    resilience: {
+      attempts: 3,
+      initialDelayMs: 500,
+      maxDelayMs: 30_000,
+      failureThreshold: 5,
+      resetTimeoutMs: 30_000,
+      halfOpenAttempts: 1,
+    },
+    onCircuitOpen: (err, ctx) => {
+      log.error({ err: err.message, kind: ctx.kind }, 'llm_circuit_open');
+      // Best-effort operator escalation. Failures are swallowed so the
+      // surrounding code path keeps progressing.
+      void discordPoster
+        .postEscalation({
+          channelRole: 'operator',
+          content: `⚠️ LLM 一時的に利用不可 (kind=\`${ctx.kind}\`)。回路 open のため一時退避中です。`,
+          metadata: { source: 'llm_bridge', circuit: 'open', kind: ctx.kind },
+        })
+        .catch(() => undefined);
+    },
+  });
 }
 
-function buildXApiClient(config: AppConfig): XApiClient | undefined {
+function buildXApiClient(
+  config: AppConfig,
+  log: ReturnType<typeof createLogger>,
+  discordPoster: DiscordPosterImpl,
+): XApiClient | undefined {
   if (
     !config.xApiConsumerKey ||
     !config.xApiConsumerSecret ||
@@ -60,12 +89,30 @@ function buildXApiClient(config: AppConfig): XApiClient | undefined {
   ) {
     return undefined;
   }
-  return new XApiClient({
-    consumerKey: config.xApiConsumerKey,
-    consumerSecret: config.xApiConsumerSecret,
-    accessToken: config.xApiAccessToken,
-    accessTokenSecret: config.xApiAccessTokenSecret,
-  });
+  return new XApiClient(
+    {
+      consumerKey: config.xApiConsumerKey,
+      consumerSecret: config.xApiConsumerSecret,
+      accessToken: config.xApiAccessToken,
+      accessTokenSecret: config.xApiAccessTokenSecret,
+    },
+    {
+      maxRetries: 2,
+      initialBackoffMs: 1_000,
+      maxBackoffMs: 30_000,
+      circuit: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenAttempts: 1 },
+      onCircuitOpen: (err) => {
+        log.error({ err: err.message }, 'x_api_circuit_open');
+        void discordPoster
+          .postEscalation({
+            channelRole: 'operator',
+            content: '⚠️ X API 一時的に利用不可。回路 open のため一時退避中です。',
+            metadata: { source: 'x_api', circuit: 'open' },
+          })
+          .catch(() => undefined);
+      },
+    },
+  );
 }
 
 /**
@@ -98,12 +145,16 @@ async function main(): Promise<void> {
   log.info({ accountId: config.accountId }, 'mex-next booting');
 
   const repo = new AccountRepo(config.accountRepo);
-  const bridge = buildLlmBridge(config);
-  const xApi = buildXApiClient(config);
   const client = createDiscordClient({ logger: log });
   const poster = new DiscordPosterImpl(client, {
     channelMap: config.discordChannelMap,
     logger: log,
+  });
+  const bridge = buildLlmBridge(config, log, poster);
+  const xApi = buildXApiClient(config, log, poster);
+
+  const judgmentEvents = new JudgmentEventStream({
+    filePath: config.judgmentEventsPath,
   });
 
   const pendingTurnStore = new PendingTurnStore({ filePath: config.pendingTurnStorePath });
@@ -118,6 +169,7 @@ async function main(): Promise<void> {
     discordPoster: poster,
     logger: log,
     operatorDiscordUserIds: config.operatorDiscordUserIds,
+    judgmentEvents,
     ...(xApi ? { xApi } : {}),
   };
 
@@ -181,57 +233,91 @@ async function main(): Promise<void> {
 
   await client.login(config.discordBotToken);
 
+  const shutdown = new GracefulShutdown({ logger: log, defaultTimeoutMs: 5_000 });
+
+  // Discord client teardown (registered first so it tears down LAST —
+  // we want to drain pending replies before pulling the gateway).
+  shutdown.register({
+    name: 'discord_client',
+    timeoutMs: 5_000,
+    run: async () => {
+      await client.destroy();
+    },
+  });
+
+  // Pending turn / session / approval stores — they are disk-backed
+  // and write through proper-lockfile, so flush is a no-op today, but
+  // the registration documents the dependency.
+  shutdown.register({
+    name: 'pending_turn_store_flush',
+    timeoutMs: 2_000,
+    run: async () => {
+      // Stores write synchronously per-mutation; this is a placeholder
+      // for future buffered impls. Reading state to confirm file is
+      // intact is intentionally NOT done here — would block shutdown.
+    },
+  });
+
+  shutdown.register({
+    name: 'judgment_events_flush',
+    timeoutMs: 3_000,
+    run: async () => {
+      await judgmentEvents.flush();
+    },
+  });
+
   // Periodic collectors: only when X API is wired AND collectors enabled.
-  const disposers: Disposable[] = [];
   if (xApi && config.collectorsEnabled) {
     const collectorBridge = adaptBridgeForCollectors(bridge);
     const collectorTimer = setInterval(() => {
       void runInboundReplyCollector({
+        accountId: config.accountId,
         repo,
         xApi,
         bridge: collectorBridge,
         discordPoster: poster,
         logger: log,
+        judgmentEvents,
       });
     }, config.collectorIntervalMs);
-    disposers.push({
-      dispose: () => {
+    shutdown.register({
+      name: 'collector_interval',
+      timeoutMs: 1_000,
+      run: async () => {
         clearInterval(collectorTimer);
       },
     });
     log.info({ intervalMs: config.collectorIntervalMs }, 'collectors_started');
   }
 
-  await new Promise<void>((resolve) => {
-    const shutdown = (signal: string): void => {
-      log.info({ signal }, 'signal_received_shutting_down');
-      for (const d of disposers) {
-        try {
-          void d.dispose();
-        } catch {
-          // best-effort
-        }
-      }
-      try {
-        void client.destroy();
-      } catch {
-        // ignore
-      }
-      resolve();
-    };
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
+  // Reset breakers last so the next process start sees a clean slate.
+  shutdown.register({
+    name: 'reset_x_api_circuit',
+    timeoutMs: 500,
+    run: async () => {
+      xApi?.resetCircuit();
+    },
   });
 
-  log.info('mex-next shutdown');
+  await new Promise<void>((resolve) => {
+    bindShutdownSignals({
+      shutdown,
+      onComplete: (signal) => {
+        log.info({ signal }, 'mex-next shutdown');
+        resolve();
+      },
+    });
+  });
 }
 
 interface RunInboundReplyOptions {
+  accountId: string;
   repo: AccountRepo;
   xApi: XApiClient;
   bridge: LlmProviderLike;
   discordPoster: DiscordPosterImpl;
   logger: ReturnType<typeof createLogger>;
+  judgmentEvents: JudgmentEventStream;
 }
 
 async function runInboundReplyCollector(opts: RunInboundReplyOptions): Promise<void> {
@@ -241,6 +327,24 @@ async function runInboundReplyCollector(opts: RunInboundReplyOptions): Promise<v
       xApi: opts.xApi,
       bridge: opts.bridge,
       discordPoster: opts.discordPoster,
+      onRiskClassified: ({ tweetId, classification, error }) => {
+        const payload: Record<string, unknown> = { tweetId };
+        if (classification) {
+          payload.risk = {
+            level: classification.level,
+            reason: classification.reason,
+          };
+        } else if (error) {
+          payload.error = error;
+        }
+        void opts.judgmentEvents
+          .emit({
+            accountId: opts.accountId,
+            kind: 'risk_classify_result',
+            payload,
+          })
+          .catch(() => undefined);
+      },
     });
     opts.logger.info(result, 'collector_inbound_reply_done');
   } catch (error) {

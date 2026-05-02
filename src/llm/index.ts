@@ -11,6 +11,7 @@ export type {
   LlmResponse,
   LlmUsage,
   LlmBridgeConfig,
+  LlmResilienceConfig,
 } from './bridge.js';
 export {
   createBridge,
@@ -18,6 +19,8 @@ export {
   withTimeout,
   LlmTimeoutError,
   LlmProviderError,
+  defaultLlmShouldRetry,
+  isRateLimitError,
 } from './bridge.js';
 
 export type { LlmKind, LlmProviderName } from './kinds.js';

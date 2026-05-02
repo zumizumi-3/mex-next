@@ -62,9 +62,27 @@ export class IntentDrivenRunner implements ConversationRunner {
       return { output: '何か書いてください。' };
     }
 
+    const judgmentEvents = this.handlerContext.judgmentEvents;
+    const accountId = this.handlerContext.accountId;
     const intent: IntentResult = await classifyIntent({
       userText,
       bridge: this.bridge,
+      onClassified: judgmentEvents
+        ? ({ input, result }): void => {
+            void judgmentEvents
+              .emit({
+                accountId,
+                kind: 'intent_classify_result',
+                payload: {
+                  input,
+                  intent: result.intent,
+                  confirmationNeeded: result.confirmationNeeded,
+                  fallbackReason: result.fallbackReason ?? null,
+                },
+              })
+              .catch(() => undefined);
+          }
+        : undefined,
     });
 
     if (abortSignal.aborted) {

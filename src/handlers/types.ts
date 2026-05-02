@@ -14,6 +14,7 @@ import type { LlmProvider } from '../llm/bridge.js';
 import type { AccountRepo } from '../account-state/repo.js';
 import type { XApiSurface } from '../x-api/types.js';
 import type { DiscordPoster } from '../posting/collectors/types.js';
+import type { JudgmentEventStream } from '../observability/judgment-events.js';
 
 export interface HandlerContext {
   readonly accountId: string;
@@ -26,6 +27,12 @@ export interface HandlerContext {
   readonly authorId?: string | null;
   /** Operator allowlist. Some destructive actions cross-check this. */
   readonly operatorDiscordUserIds?: ReadonlyArray<string>;
+  /**
+   * Optional sink for LLM / runtime judgment events. Handlers should
+   * `await ctx.judgmentEvents?.emit(...)` whenever they produce a
+   * decision worth replaying.
+   */
+  readonly judgmentEvents?: JudgmentEventStream;
 }
 
 export interface HandlerResult {

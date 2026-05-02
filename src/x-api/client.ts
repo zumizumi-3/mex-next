@@ -14,6 +14,8 @@
  */
 
 import { TwitterApi, type TweetV2, type UserV2, type ApiResponseError } from 'twitter-api-v2';
+import { CircuitBreaker, CircuitOpenError } from '../utils/circuit-breaker.js';
+import { retryWithBackoff } from '../utils/retry.js';
 import {
   type MentionEvent,
   type PaginationOptions,
@@ -49,10 +51,20 @@ const defaultFactory: TwitterApiFactory = (creds) =>
 export interface XApiClientOptions {
   /** Optional override for tests. */
   factory?: TwitterApiFactory;
-  /** Max retries on 429. Default 2. */
+  /** Max retries on 429 / 5xx. Default 2 (so 3 total attempts). */
   maxRetries?: number;
-  /** Initial backoff in ms on 429. Default 1000. */
+  /** Initial backoff in ms on transient errors. Default 1000. */
   initialBackoffMs?: number;
+  /** Max backoff in ms (cap). Default 30s. */
+  maxBackoffMs?: number;
+  /**
+   * Circuit-breaker config. Pass `null` (or omit) to disable. Defaults
+   * trip after 5 consecutive non-recoverable failures and open the
+   * circuit for 60s.
+   */
+  circuit?: { failureThreshold: number; resetTimeoutMs: number; halfOpenAttempts?: number } | null;
+  /** Fired when the X API circuit opens — operator escalation hook. */
+  onCircuitOpen?: (error: CircuitOpenError) => void;
 }
 
 /**
@@ -63,12 +75,37 @@ export class XApiClient implements XApiSurface {
   private readonly api: TwitterApi;
   private readonly maxRetries: number;
   private readonly initialBackoffMs: number;
+  private readonly maxBackoffMs: number;
+  private readonly breaker: CircuitBreaker | null;
+  private readonly onCircuitOpen: ((error: CircuitOpenError) => void) | undefined;
 
   constructor(creds: XApiCredentials, opts: XApiClientOptions = {}) {
     const factory = opts.factory ?? defaultFactory;
     this.api = factory(creds);
     this.maxRetries = opts.maxRetries ?? 2;
     this.initialBackoffMs = opts.initialBackoffMs ?? 1000;
+    this.maxBackoffMs = opts.maxBackoffMs ?? 30_000;
+    if (opts.circuit === null) {
+      this.breaker = null;
+    } else {
+      const cfg = opts.circuit ?? { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenAttempts: 1 };
+      this.breaker = new CircuitBreaker({
+        failureThreshold: cfg.failureThreshold,
+        resetTimeoutMs: cfg.resetTimeoutMs,
+        halfOpenAttempts: cfg.halfOpenAttempts ?? 1,
+      });
+    }
+    this.onCircuitOpen = opts.onCircuitOpen;
+  }
+
+  /** Inspect circuit state — used by health endpoint / observability. */
+  get circuitState(): 'closed' | 'open' | 'half-open' | 'disabled' {
+    return this.breaker ? this.breaker.getState() : 'disabled';
+  }
+
+  /** Reset circuit (e.g. operator-driven recovery). */
+  resetCircuit(): void {
+    this.breaker?.reset();
   }
 
   async post(text: string, opts: PostOptions = {}): Promise<PostResult> {
@@ -170,33 +207,74 @@ export class XApiClient implements XApiSurface {
   }
 
   private async runWithRetry<T>(kind: string, fn: () => Promise<T>): Promise<T> {
-    let attempt = 0;
-    let backoff = this.initialBackoffMs;
-    while (true) {
-      try {
-        return await fn();
-      } catch (error: unknown) {
-        if (error instanceof XApiError) {
-          throw error;
-        }
-        const status = extractStatus(error);
-        if (status === 429 && attempt < this.maxRetries) {
-          attempt += 1;
-          await delay(backoff);
-          backoff *= 2;
-          continue;
-        }
-        if (status === 401) {
-          throw new XApiError(kind, 'unauthorized — token may be expired or revoked', {
-            status,
-            cause: error,
-          });
-        }
-        throw new XApiError(kind, extractMessage(error), {
-          ...(status !== undefined ? { status } : {}),
+    const guarded = (): Promise<T> =>
+      retryWithBackoff(
+        async () => {
+          try {
+            return await fn();
+          } catch (error: unknown) {
+            // Wrap into XApiError once we KNOW we won't retry further.
+            // We need the raw status visible to `shouldRetry` so we
+            // re-throw the original error here; the outer catch below
+            // wraps the final / non-retriable case.
+            throw error;
+          }
+        },
+        {
+          attempts: this.maxRetries + 1,
+          initialDelayMs: this.initialBackoffMs,
+          maxDelayMs: this.maxBackoffMs,
+          backoffFactor: 2,
+          shouldRetry: (error) => {
+            // Already-wrapped XApiError = don't retry (already final).
+            if (error instanceof XApiError) return false;
+            const status = extractStatus(error);
+            // 401 / 403 / 4xx (except 429) → don't retry.
+            if (status === 401 || status === 403) return false;
+            if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
+              return false;
+            }
+            return true;
+          },
+        },
+      );
+
+    const breaker = this.breaker;
+    const exec = (): Promise<T> => {
+      if (!breaker) return guarded();
+      // The breaker is shared across calls; per-call result type is T.
+      return breaker.execute(guarded) as Promise<T>;
+    };
+
+    try {
+      return await exec();
+    } catch (error: unknown) {
+      if (error instanceof CircuitOpenError) {
+        this.onCircuitOpen?.(error);
+        throw new XApiError(kind, 'x_api circuit open — upstream unhealthy', {
           cause: error,
         });
       }
+      if (error instanceof XApiError) {
+        throw error;
+      }
+      const status = extractStatus(error);
+      if (status === 401) {
+        throw new XApiError(kind, 'unauthorized — token may be expired or revoked', {
+          status,
+          cause: error,
+        });
+      }
+      if (status === 403) {
+        throw new XApiError(kind, 'forbidden — token lacks scope or account suspended', {
+          status,
+          cause: error,
+        });
+      }
+      throw new XApiError(kind, extractMessage(error), {
+        ...(status !== undefined ? { status } : {}),
+        cause: error,
+      });
     }
   }
 }
@@ -339,6 +417,3 @@ function extractMessage(error: unknown): string {
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

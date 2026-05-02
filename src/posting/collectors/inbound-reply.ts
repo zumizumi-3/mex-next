@@ -32,6 +32,16 @@ export interface CollectInboundRepliesOptions {
   maxFetch?: number;
   /** Optional clock injection for tests. */
   now?: () => string;
+  /**
+   * Optional sink for judgment events. Called once per classified
+   * mention; failures in the callback are swallowed inside the
+   * collector so observability never blocks ingestion.
+   */
+  onRiskClassified?: (info: {
+    tweetId: string;
+    classification?: RiskClassification;
+    error?: string;
+  }) => void;
 }
 
 export interface CollectInboundRepliesResult {
@@ -102,18 +112,21 @@ export async function collectInboundReplies(
     let classification: RiskClassification;
     try {
       classification = await classifyRisk(bridge, mention);
+      safeEmitRisk(opts.onRiskClassified, { tweetId: mention.id, classification });
     } catch (error: unknown) {
       errors += 1;
+      const reason = `classify failed: ${describeError(error)}`;
       existingSessions[mention.id] = {
         event_id: mention.id,
         tweet_id: mention.id,
         author_handle: mention.author.handle,
         risk_level: 'high_risk',
-        reason: `classify failed: ${describeError(error)}`,
+        reason,
         draft_text: '',
         created_at: now(),
         status: 'error',
       };
+      safeEmitRisk(opts.onRiskClassified, { tweetId: mention.id, error: reason });
       continue;
     }
 
@@ -386,6 +399,18 @@ function compareIds(a: string, b: string): number {
 function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function safeEmitRisk(
+  cb: CollectInboundRepliesOptions['onRiskClassified'] | undefined,
+  info: { tweetId: string; classification?: RiskClassification; error?: string },
+): void {
+  if (!cb) return;
+  try {
+    cb(info);
+  } catch {
+    // observability hooks must never bubble up
+  }
 }
 
 function defaultNow(): string {

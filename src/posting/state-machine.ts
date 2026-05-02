@@ -104,6 +104,11 @@ export interface PostingStateMachineOptions {
   sessionTtlHours?: number;
   /** Override clock for tests. */
   clock?: () => Date;
+  /**
+   * Optional emit hook for the 5-axis quality judge result. Wired to
+   * a JudgmentEventStream from main.ts so judgments are auditable.
+   */
+  onQualityJudged?: (info: { sessionId: string; pass: boolean; axes: Record<string, number> }) => void;
 }
 
 /**
@@ -116,6 +121,7 @@ export class PostingStateMachine {
   private readonly logger: Logger | undefined;
   private readonly ttlHours: number;
   private readonly clock: () => Date;
+  private readonly onQualityJudged: PostingStateMachineOptions['onQualityJudged'];
 
   constructor(opts: PostingStateMachineOptions) {
     this.repo = opts.repo;
@@ -123,6 +129,7 @@ export class PostingStateMachine {
     this.logger = opts.logger;
     this.ttlHours = opts.sessionTtlHours ?? DEFAULT_SESSION_TTL_HOURS;
     this.clock = opts.clock ?? (() => new Date());
+    this.onQualityJudged = opts.onQualityJudged;
   }
 
   private nowIso(): string {
@@ -270,6 +277,15 @@ export class PostingStateMachine {
         candidateText: candidate.text,
         account,
         bridge: this.bridge,
+        onJudged: ({ result }) => {
+          try {
+            const axes: Record<string, number> = {};
+            for (const s of result.scores) axes[s.axis] = s.score;
+            this.onQualityJudged?.({ sessionId, pass: result.pass, axes });
+          } catch {
+            // observability hooks must never bubble up
+          }
+        },
       });
     }
 
