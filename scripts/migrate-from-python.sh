@@ -139,12 +139,22 @@ step_migrate_state() {
 # ============================================================================
 # [6/11] Doppler secrets 補完
 # ============================================================================
+upsert_env_var() {
+    # upsert KEY=VALUE in $ENV_FILE (replace existing line, else append).
+    local key="$1"
+    local value="$2"
+    [ -f "$ENV_FILE" ] || { mkdir -p "$(dirname "$ENV_FILE")"; touch "$ENV_FILE"; chmod 600 "$ENV_FILE"; }
+    # remove any existing assignment for $key, then append
+    if grep -qE "^${key}=" "$ENV_FILE"; then
+        sed -i "/^${key}=/d" "$ENV_FILE"
+    fi
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+}
+
 step_topup_doppler() {
-    log "[6/11] Doppler secrets を mex-next 用に補完"
+    log "[6/11] secrets / deployment metadata を整備"
     # 既存の service token を /etc/mex/<account>.env から source
-    # (root に doppler login が無くても CLI が動くように)
     if [ -f "$ENV_FILE" ]; then
-        # shellcheck disable=SC1090
         local prev_token="${DOPPLER_TOKEN:-}"
         # shellcheck disable=SC1090
         source "$ENV_FILE"
@@ -153,7 +163,7 @@ step_topup_doppler() {
             export DOPPLER_TOKEN
         fi
     fi
-    # 既存値の存在確認
+    # Doppler 既存 secrets (read-only) を確認
     local has_anthropic discord_token
     has_anthropic=$(doppler secrets get ANTHROPIC_API_KEY \
         --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
@@ -171,14 +181,14 @@ step_topup_doppler() {
         echo "  空 Enter で skip (全 kind を Claude Code CLI 経由にする)。"
         prompt "Anthropic API key (sk-ant-... / 空 Enter で skip):" ANTHROPIC_KEY
         if [ -n "$ANTHROPIC_KEY" ]; then
-            doppler secrets set "ANTHROPIC_API_KEY=${ANTHROPIC_KEY}" \
-                --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --silent
-            ok "ANTHROPIC_API_KEY 投入"
+            # 直接 env file へ。Doppler は read-only token のことが多い。
+            upsert_env_var "ANTHROPIC_API_KEY" "$ANTHROPIC_KEY"
+            ok "ANTHROPIC_API_KEY を $ENV_FILE に保存"
         else
             ok "ANTHROPIC_API_KEY skip → Claude Code CLI モード"
         fi
     else
-        ok "ANTHROPIC_API_KEY 既存"
+        ok "ANTHROPIC_API_KEY 既存 (Doppler)"
     fi
 
     # Channel role mapping (mex-next 規約)
@@ -222,23 +232,30 @@ step_topup_doppler() {
     [ -n "$ch_passive" ] || fail "DISCORD_CHANNEL_CUSTOMER_PASSIVE が必要"
     [ -n "$ch_operator" ] || fail "DISCORD_CHANNEL_OPERATOR が必要"
 
-    doppler secrets set \
-        "DISCORD_CHANNEL_CUSTOMER_ATTENTION=${ch_attention}" \
-        "DISCORD_CHANNEL_CUSTOMER_PASSIVE=${ch_passive}" \
-        "DISCORD_CHANNEL_OPERATOR=${ch_operator}" \
-        "ACCOUNT_ID=${ACCOUNT_ID}" \
-        "ACCOUNT_REPO=${ACCOUNT_REPO}" \
-        --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --silent
+    # Deployment metadata は env file に直書き (Doppler の read-only token でも動く)
+    upsert_env_var "DISCORD_CHANNEL_CUSTOMER_ATTENTION" "$ch_attention"
+    upsert_env_var "DISCORD_CHANNEL_CUSTOMER_PASSIVE" "$ch_passive"
+    upsert_env_var "DISCORD_CHANNEL_OPERATOR" "$ch_operator"
+    upsert_env_var "ACCOUNT_ID" "$ACCOUNT_ID"
+    upsert_env_var "ACCOUNT_REPO" "$ACCOUNT_REPO"
+    ok "channel mapping + ACCOUNT_ID/_REPO を $ENV_FILE に書込"
 
     # Operator user ID も補完
     local op_users
     op_users=$(doppler secrets get OPERATOR_DISCORD_USER_IDS \
         --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
     if [ -z "$op_users" ]; then
-        prompt "Operator Discord user IDs (カンマ区切り、bot に DM で操作許可される user)" op_users
-        doppler secrets set "OPERATOR_DISCORD_USER_IDS=${op_users}" \
-            --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --silent
-        ok "OPERATOR_DISCORD_USER_IDS 投入"
+        # /etc/mex/<account>.env を再 source して既存値を確認
+        local env_op_users="${OPERATOR_DISCORD_USER_IDS:-}"
+        if [ -z "$env_op_users" ]; then
+            prompt "Operator Discord user IDs (カンマ区切り、bot に DM で操作許可される user)" op_users
+            upsert_env_var "OPERATOR_DISCORD_USER_IDS" "$op_users"
+            ok "OPERATOR_DISCORD_USER_IDS を $ENV_FILE に書込"
+        else
+            ok "OPERATOR_DISCORD_USER_IDS 既存 ($ENV_FILE)"
+        fi
+    else
+        ok "OPERATOR_DISCORD_USER_IDS 既存 (Doppler)"
     fi
 
     # 控えとく (registry に書き戻す用)
@@ -246,7 +263,7 @@ step_topup_doppler() {
     CH_PASSIVE="$ch_passive"
     CH_OPERATOR="$ch_operator"
 
-    ok "Doppler secrets 整備完了"
+    ok "secrets / metadata 整備完了"
 }
 
 # ============================================================================
