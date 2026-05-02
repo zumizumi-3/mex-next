@@ -147,7 +147,7 @@ export async function applyFreeFormAnswer(
       // seconds. Don't make the customer wait at the end of the wizard.
       // The background task posts its own thread when ready, or escalates
       // to the operator on failure.
-      runBootstrapFirstDraftInBackground(ctx);
+      void runBootstrapFirstDraftInBackground(ctx);
       return [
         `${STATE_EMOJI.ok} オンボーディング完了！ account.json を更新しました。`,
         `- account_id: \`${finalize.account.account_id}\``,
@@ -155,7 +155,9 @@ export async function applyFreeFormAnswer(
         '',
         '日次運用開始。明朝 07:00 JST から自動で投稿候補が作られます。',
         '\n📝 最初の投稿候補を作成中です…(まもなく別 thread で届きます)',
-      ].filter(Boolean).join('\n');
+      ]
+        .filter(Boolean)
+        .join('\n');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return `${STATE_EMOJI.attention} 全質問の回答は保存しましたが、account.json への反映でエラー: ${message}`;
@@ -306,9 +308,7 @@ async function bootstrapFirstDraft(ctx: HandlerContext): Promise<FirstDraftOutco
  * Exported so tests can directly assert that the background work
  * completes without the caller awaiting it.
  */
-export function runBootstrapFirstDraftInBackground(
-  ctx: HandlerContext,
-): Promise<void> {
+export function runBootstrapFirstDraftInBackground(ctx: HandlerContext): Promise<void> {
   // Detach scheduling from the caller's microtask so the customer
   // reply flushes before the heavy LLM pipeline kicks in.
   const work = (async (): Promise<void> => {
@@ -321,21 +321,18 @@ export function runBootstrapFirstDraftInBackground(
       outcome = { kind: 'fail', reason };
     }
     if (outcome.kind === 'fail') {
-      ctx.logger.warn?.(
-        { reason: outcome.reason },
-        'bootstrap_first_draft_failed_background',
-      );
+      ctx.logger.warn?.({ reason: outcome.reason }, 'bootstrap_first_draft_failed_background');
       try {
         const mention =
-          (ctx.operatorDiscordUserIds && ctx.operatorDiscordUserIds[0])
+          ctx.operatorDiscordUserIds && ctx.operatorDiscordUserIds[0]
             ? `<@${ctx.operatorDiscordUserIds[0]}> `
             : '';
         await ctx.discordPoster.postEscalation({
           channelRole: 'operator',
           content:
-            `${mention}[FAIL] onboarding bootstrap first draft\n`
-            + `account: ${ctx.accountId}\n`
-            + `reason: ${outcome.reason}`,
+            `${mention}[FAIL] onboarding bootstrap first draft\n` +
+            `account: ${ctx.accountId}\n` +
+            `reason: ${outcome.reason}`,
           metadata: {
             kind: 'onboarding_bootstrap_failed',
             accountId: ctx.accountId,

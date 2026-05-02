@@ -4,6 +4,16 @@
 # 使い方 (VPS で root):
 #   curl -fsSL https://raw.githubusercontent.com/zumizumi-3/mex-next/main/scripts/bootstrap.sh | bash
 #
+# unattended:
+#   MEX_BOOTSTRAP_UNATTENDED=1 \
+#   MEX_BOOTSTRAP_ACCOUNT_ID=tanaka-x \
+#   MEX_BOOTSTRAP_GITHUB_REPO=tanaka-kun/tanaka-x-ops \
+#   MEX_BOOTSTRAP_DOPPLER_TOKEN=dp.st.... \
+#   MEX_BOOTSTRAP_DISCORD_TOKEN=... \
+#   MEX_BOOTSTRAP_DISCORD_CHANNEL_ID=... \
+#   MEX_BOOTSTRAP_OPERATOR_USER_IDS=... \
+#   bash scripts/bootstrap.sh
+#
 # 流れ (対話):
 #   [1] install.sh 走らせる (冪等)
 #   [2] account_id を聞く
@@ -32,7 +42,88 @@ warn()   { echo "  [WARN] $*"; }
 fail()   { echo "  [FAIL] $*" >&2; exit 1; }
 prompt() { read -rp "  > $1 " "$2"; }
 prompt_secret() { read -rsp "  > $1 " "$2"; echo; }
-pause()  { read -rp "  -> $1 (終わったら Enter) "; }
+
+is_unattended() {
+    [[ "${MEX_BOOTSTRAP_UNATTENDED:-0}" =~ ^(1|true|TRUE|yes|YES)$ ]]
+}
+
+pause() {
+    if is_unattended; then
+        ok "unattended: $1 (skip pause)"
+        return 0
+    fi
+    read -rp "  -> $1 (終わったら Enter) "
+}
+
+prompt_from_env() {
+    local env_name="$1"
+    local label="$2"
+    local dest="$3"
+    local required="${4:-required}"
+    local value="${!env_name:-}"
+    if [ -n "${value}" ]; then
+        printf -v "${dest}" '%s' "${value}"
+        return 0
+    fi
+    if is_unattended; then
+        if [ "${required}" = "required" ]; then
+            fail "${env_name} is required in unattended mode"
+        fi
+        printf -v "${dest}" ''
+        return 0
+    fi
+    prompt "${label}" "${dest}"
+}
+
+prompt_secret_from_env() {
+    local env_name="$1"
+    local label="$2"
+    local dest="$3"
+    local required="${4:-required}"
+    local value="${!env_name:-}"
+    if [ -n "${value}" ]; then
+        printf -v "${dest}" '%s' "${value}"
+        return 0
+    fi
+    if is_unattended; then
+        if [ "${required}" = "required" ]; then
+            fail "${env_name} is required in unattended mode"
+        fi
+        printf -v "${dest}" ''
+        return 0
+    fi
+    prompt_secret "${label}" "${dest}"
+}
+
+append_env_if_set() {
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    if [ -n "${value}" ]; then
+        printf '%s=%s\n' "${key}" "${value}" >> "${file}"
+    fi
+}
+
+fetch_discord_application_id() {
+    local token="$1"
+    if [ -z "${token}" ]; then
+        return 1
+    fi
+    DISCORD_BOT_TOKEN="${token}" node -e '
+const token = process.env.DISCORD_BOT_TOKEN;
+fetch("https://discord.com/api/v10/oauth2/applications/@me", {
+  headers: { Authorization: `Bot ${token}` },
+}).then(async (res) => {
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const data = await res.json();
+  if (!data.id) throw new Error("application id missing in Discord response");
+  console.log(data.id);
+}).catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
+'
+}
 
 if [ "$EUID" -ne 0 ]; then
     fail "root で実行してください"
@@ -41,6 +132,9 @@ fi
 ACCOUNT_ID=""
 ACCOUNT_REPO=""
 DOPPLER_TOKEN=""
+ACCOUNT_GITHUB_REPO=""
+DISCORD_APPLICATION_ID_BOOTSTRAP=""
+DISCORD_GUILD_ID_BOOTSTRAP=""
 
 # ======================================================================
 # [1] install.sh 走らせる
@@ -61,13 +155,17 @@ step_install() {
 # ======================================================================
 step_account_id() {
     log "[2/9] account_id を決めてください (英小文字 + 数字 + ハイフン、例: zumi-x)"
-    prompt "account_id:" ACCOUNT_ID
+    prompt_from_env "MEX_BOOTSTRAP_ACCOUNT_ID" "account_id:" ACCOUNT_ID
     if [[ ! "${ACCOUNT_ID}" =~ ^[a-z][a-z0-9-]*$ ]]; then
         fail "account_id は英小文字 + 数字 + ハイフン (先頭は英字) のみ"
     fi
-    ACCOUNT_REPO="${MEX_ACCOUNTS_ROOT}/${ACCOUNT_ID}-x-ops"
+    ACCOUNT_REPO="${MEX_BOOTSTRAP_ACCOUNT_REPO_PATH:-${MEX_ACCOUNTS_ROOT}/${ACCOUNT_ID}-x-ops}"
+    ACCOUNT_GITHUB_REPO="${MEX_BOOTSTRAP_GITHUB_REPO:-}"
     ok "account_id: ${ACCOUNT_ID}"
     ok "account repo path: ${ACCOUNT_REPO}"
+    if [ -n "${ACCOUNT_GITHUB_REPO}" ]; then
+        ok "GitHub repo: ${ACCOUNT_GITHUB_REPO}"
+    fi
 }
 
 # ======================================================================
@@ -79,12 +177,18 @@ step_logins() {
     if ! claude --version >/dev/null 2>&1; then
         fail "claude CLI が見つかりません。install.sh を確認してください"
     fi
+    if is_unattended; then
+        ok "unattended: claude login prompt skip"
+    else
     echo "  Claude Code login を開始 (既に login 済ならそのまま完了します)"
     claude login || warn "claude login 完了したか確認してください"
+    fi
     ok "claude login 済 (or skip)"
 
     if gh auth status >/dev/null 2>&1; then
         ok "gh 既に login 済"
+    elif is_unattended; then
+        warn "unattended: gh 未 login。private repo clone が失敗する場合は事前に gh auth login してください"
     else
         echo "  gh auth login を開始..."
         gh auth login
@@ -94,6 +198,12 @@ step_logins() {
 
     if doppler me >/dev/null 2>&1; then
         ok "doppler 既に login 済"
+    elif is_unattended; then
+        if [ -n "${MEX_BOOTSTRAP_DOPPLER_TOKEN:-}" ]; then
+            ok "unattended: Doppler user login skip (service token provided)"
+        else
+            warn "unattended: doppler 未 login。project 作成が必要な場合は事前に doppler login してください"
+        fi
     else
         echo "  doppler login を開始..."
         doppler login
@@ -111,6 +221,15 @@ step_account_repo() {
     if [ -d "${ACCOUNT_REPO}/.git" ]; then
         ok "account repo 既存: ${ACCOUNT_REPO}"
         (cd "${ACCOUNT_REPO}" && git pull --ff-only) || warn "git pull 失敗、手動確認"
+        return 0
+    fi
+
+    if is_unattended; then
+        if [ -z "${ACCOUNT_GITHUB_REPO}" ]; then
+            fail "MEX_BOOTSTRAP_GITHUB_REPO is required in unattended mode when account repo is not already cloned"
+        fi
+        gh repo clone "${ACCOUNT_GITHUB_REPO}" "${ACCOUNT_REPO}"
+        ok "account repo cloned: ${ACCOUNT_REPO}"
         return 0
     fi
 
@@ -155,9 +274,33 @@ step_account_repo() {
 # ======================================================================
 step_doppler() {
     log "[5/9] Doppler project / config を作成"
-    node "${MEX_NEXT_DIR}/dist/scripts/setup-doppler.js" \
-        --account-id "${ACCOUNT_ID}" \
-        || warn "setup-doppler 失敗、後で手動で確認"
+    if is_unattended && ! doppler me >/dev/null 2>&1; then
+        warn "unattended: Doppler user login なし。project/config 作成は skip (既存 service token 前提)"
+    else
+        node "${MEX_NEXT_DIR}/dist/scripts/setup-doppler.js" \
+            --account-id "${ACCOUNT_ID}" \
+            || warn "setup-doppler 失敗、後で手動で確認"
+    fi
+    if doppler me >/dev/null 2>&1; then
+        local project="xops-${ACCOUNT_ID}"
+        local config="prd"
+        if [ -n "${MEX_BOOTSTRAP_DISCORD_TOKEN:-}" ]; then
+            doppler secrets set "DISCORD_BOT_TOKEN=${MEX_BOOTSTRAP_DISCORD_TOKEN}" \
+                --project "${project}" --config "${config}" --no-interactive || warn "DISCORD_BOT_TOKEN set 失敗"
+        fi
+        if [ -n "${MEX_BOOTSTRAP_DISCORD_APPLICATION_ID:-}" ]; then
+            doppler secrets set "DISCORD_APPLICATION_ID=${MEX_BOOTSTRAP_DISCORD_APPLICATION_ID}" \
+                --project "${project}" --config "${config}" --no-interactive || warn "DISCORD_APPLICATION_ID set 失敗"
+        fi
+        if [ -n "${MEX_BOOTSTRAP_DISCORD_GUILD_ID:-}" ]; then
+            doppler secrets set "DISCORD_GUILD_ID=${MEX_BOOTSTRAP_DISCORD_GUILD_ID}" \
+                --project "${project}" --config "${config}" --no-interactive || warn "DISCORD_GUILD_ID set 失敗"
+        fi
+        if [ -n "${MEX_BOOTSTRAP_OPERATOR_USER_IDS:-}" ]; then
+            doppler secrets set "OPERATOR_DISCORD_USER_IDS=${MEX_BOOTSTRAP_OPERATOR_USER_IDS}" \
+                --project "${project}" --config "${config}" --no-interactive || warn "OPERATOR_DISCORD_USER_IDS set 失敗"
+        fi
+    fi
     ok "Doppler project 設定完了"
 }
 
@@ -176,7 +319,29 @@ step_discord() {
     echo ""
     pause "Discord bot 作成 + install 完了したら"
 
-    node "${MEX_NEXT_DIR}/dist/scripts/setup-discord.js" \
+    DISCORD_APPLICATION_ID_BOOTSTRAP="${MEX_BOOTSTRAP_DISCORD_APPLICATION_ID:-}"
+    DISCORD_GUILD_ID_BOOTSTRAP="${MEX_BOOTSTRAP_DISCORD_GUILD_ID:-}"
+    if [ -z "${DISCORD_APPLICATION_ID_BOOTSTRAP}" ] && [ -n "${MEX_BOOTSTRAP_DISCORD_TOKEN:-}" ]; then
+        DISCORD_APPLICATION_ID_BOOTSTRAP="$(fetch_discord_application_id "${MEX_BOOTSTRAP_DISCORD_TOKEN}")" \
+            || fail "Discord application id を bot token から取得できませんでした。MEX_BOOTSTRAP_DISCORD_APPLICATION_ID を指定してください"
+        ok "Discord application id を bot token から取得"
+    fi
+
+    if is_unattended; then
+        [ -n "${DISCORD_APPLICATION_ID_BOOTSTRAP}" ] || fail "MEX_BOOTSTRAP_DISCORD_APPLICATION_ID is required in unattended mode when it cannot be derived from MEX_BOOTSTRAP_DISCORD_TOKEN"
+        [ -n "${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}${MEX_BOOTSTRAP_DISCORD_CUSTOMER_MAIN_CHANNEL_ID:-}" ] || fail "MEX_BOOTSTRAP_DISCORD_CHANNEL_ID or MEX_BOOTSTRAP_DISCORD_CUSTOMER_MAIN_CHANNEL_ID is required in unattended mode"
+    fi
+
+    MEX_SETUP_DISCORD_APPLICATION_ID="${DISCORD_APPLICATION_ID_BOOTSTRAP}" \
+    MEX_SETUP_DISCORD_GUILD_ID="${DISCORD_GUILD_ID_BOOTSTRAP}" \
+    MEX_SETUP_UNATTENDED="${MEX_BOOTSTRAP_UNATTENDED:-}" \
+    MEX_SETUP_DISCORD_CHANNEL_ID="${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}" \
+    MEX_SETUP_DISCORD_CUSTOMER_MAIN_CHANNEL_ID="${MEX_BOOTSTRAP_DISCORD_CUSTOMER_MAIN_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}" \
+    MEX_SETUP_DISCORD_CUSTOMER_ATTENTION_CHANNEL_ID="${MEX_BOOTSTRAP_DISCORD_CUSTOMER_ATTENTION_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}" \
+    MEX_SETUP_DISCORD_CUSTOMER_PASSIVE_CHANNEL_ID="${MEX_BOOTSTRAP_DISCORD_CUSTOMER_PASSIVE_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}" \
+    MEX_SETUP_DISCORD_OPERATOR_ALERT_CHANNEL_ID="${MEX_BOOTSTRAP_DISCORD_OPERATOR_ALERT_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}" \
+    MEX_SETUP_OPERATOR_USER_IDS="${MEX_BOOTSTRAP_OPERATOR_USER_IDS:-}" \
+        node "${MEX_NEXT_DIR}/dist/scripts/setup-discord.js" \
         --account-id "${ACCOUNT_ID}" \
         --account-repo "${ACCOUNT_REPO}" \
         || warn "setup-discord 失敗、後で手動で確認"
@@ -188,7 +353,10 @@ step_discord() {
 # ======================================================================
 step_slash() {
     log "[7/9] Discord slash command 登録"
-    node "${MEX_NEXT_DIR}/dist/scripts/register-slash.js" \
+    DISCORD_BOT_TOKEN="${MEX_BOOTSTRAP_DISCORD_TOKEN:-${DISCORD_BOT_TOKEN:-}}" \
+    DISCORD_APPLICATION_ID="${DISCORD_APPLICATION_ID_BOOTSTRAP:-${MEX_BOOTSTRAP_DISCORD_APPLICATION_ID:-${DISCORD_APPLICATION_ID:-}}}" \
+    DISCORD_GUILD_ID="${DISCORD_GUILD_ID_BOOTSTRAP:-${MEX_BOOTSTRAP_DISCORD_GUILD_ID:-${DISCORD_GUILD_ID:-}}}" \
+        node "${MEX_NEXT_DIR}/dist/scripts/register-slash.js" \
         --account-id "${ACCOUNT_ID}" \
         || warn "register-slash 失敗、後で手動で実行"
     ok "slash command 登録完了"
@@ -217,7 +385,7 @@ step_systemd() {
     else
         echo ""
         echo "  Doppler service token (Read Only / xops-${ACCOUNT_ID} / prd) を貼ってください"
-        prompt_secret "DOPPLER_TOKEN:" DOPPLER_TOKEN
+        prompt_secret_from_env "MEX_BOOTSTRAP_DOPPLER_TOKEN" "DOPPLER_TOKEN:" DOPPLER_TOKEN
         if [ -z "${DOPPLER_TOKEN}" ]; then
             fail "DOPPLER_TOKEN は必須です"
         fi
@@ -227,6 +395,14 @@ DOPPLER_TOKEN=${DOPPLER_TOKEN}
 ACCOUNT_ID=${ACCOUNT_ID}
 ACCOUNT_REPO=${ACCOUNT_REPO}
 EOF
+        append_env_if_set "${env_file}" "DISCORD_BOT_TOKEN" "${MEX_BOOTSTRAP_DISCORD_TOKEN:-}"
+        append_env_if_set "${env_file}" "DISCORD_APPLICATION_ID" "${DISCORD_APPLICATION_ID_BOOTSTRAP:-${MEX_BOOTSTRAP_DISCORD_APPLICATION_ID:-}}"
+        append_env_if_set "${env_file}" "DISCORD_GUILD_ID" "${DISCORD_GUILD_ID_BOOTSTRAP:-${MEX_BOOTSTRAP_DISCORD_GUILD_ID:-}}"
+        append_env_if_set "${env_file}" "OPERATOR_DISCORD_USER_IDS" "${MEX_BOOTSTRAP_OPERATOR_USER_IDS:-}"
+        append_env_if_set "${env_file}" "DISCORD_CHANNEL_CUSTOMER_MAIN" "${MEX_BOOTSTRAP_DISCORD_CUSTOMER_MAIN_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}"
+        append_env_if_set "${env_file}" "DISCORD_CHANNEL_CUSTOMER_ATTENTION" "${MEX_BOOTSTRAP_DISCORD_CUSTOMER_ATTENTION_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}"
+        append_env_if_set "${env_file}" "DISCORD_CHANNEL_CUSTOMER_PASSIVE" "${MEX_BOOTSTRAP_DISCORD_CUSTOMER_PASSIVE_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}"
+        append_env_if_set "${env_file}" "DISCORD_CHANNEL_OPERATOR_ALERT" "${MEX_BOOTSTRAP_DISCORD_OPERATOR_ALERT_CHANNEL_ID:-${MEX_BOOTSTRAP_DISCORD_CHANNEL_ID:-}}"
         chmod 600 "${env_file}"
         ok "env file 作成: ${env_file}"
     fi

@@ -88,7 +88,11 @@ export class XApiClient implements XApiSurface {
     if (opts.circuit === null) {
       this.breaker = null;
     } else {
-      const cfg = opts.circuit ?? { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenAttempts: 1 };
+      const cfg = opts.circuit ?? {
+        failureThreshold: 5,
+        resetTimeoutMs: 60_000,
+        halfOpenAttempts: 1,
+      };
       this.breaker = new CircuitBreaker({
         failureThreshold: cfg.failureThreshold,
         resetTimeoutMs: cfg.resetTimeoutMs,
@@ -220,30 +224,21 @@ export class XApiClient implements XApiSurface {
 
   private async runWithRetry<T>(kind: string, fn: () => Promise<T>): Promise<T> {
     const guarded = (): Promise<T> =>
-      retryWithBackoff(
-        async () => {
-          try {
-            return await fn();
-          } catch (error: unknown) {
-            throw error;
+      retryWithBackoff(fn, {
+        attempts: this.maxRetries + 1,
+        initialDelayMs: this.initialBackoffMs,
+        maxDelayMs: this.maxBackoffMs,
+        backoffFactor: 2,
+        shouldRetry: (error) => {
+          if (error instanceof XApiError) return false;
+          const status = extractStatus(error);
+          if (status === 401 || status === 403) return false;
+          if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
+            return false;
           }
+          return true;
         },
-        {
-          attempts: this.maxRetries + 1,
-          initialDelayMs: this.initialBackoffMs,
-          maxDelayMs: this.maxBackoffMs,
-          backoffFactor: 2,
-          shouldRetry: (error) => {
-            if (error instanceof XApiError) return false;
-            const status = extractStatus(error);
-            if (status === 401 || status === 403) return false;
-            if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
-              return false;
-            }
-            return true;
-          },
-        },
-      );
+      });
 
     const breaker = this.breaker;
     const exec = (): Promise<T> => {
@@ -425,4 +420,3 @@ function extractMessage(error: unknown): string {
     return 'unknown error';
   }
 }
-

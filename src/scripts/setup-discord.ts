@@ -44,6 +44,7 @@ import { z } from 'zod';
 
 const REGISTRY_PATH =
   process.env.MEX_ACCOUNTS_REGISTRY ?? '/var/lib/mex-next/accounts-registry.json';
+const UNATTENDED = /^(1|true|yes)$/i.test(process.env.MEX_SETUP_UNATTENDED ?? '');
 
 const ChannelMapSchema = z.object({
   customer_main: z.string().default(''),
@@ -109,6 +110,18 @@ async function ask(
   return answer.length > 0 ? answer : (defaultValue ?? '');
 }
 
+async function askEnvFirst(
+  rl: ReturnType<typeof createInterface>,
+  envName: string,
+  label: string,
+  defaultValue?: string,
+): Promise<string> {
+  const value = process.env[envName];
+  if (value && value.trim().length > 0) return value.trim();
+  if (UNATTENDED) return defaultValue ?? '';
+  return ask(rl, label, defaultValue);
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -131,38 +144,50 @@ async function main(): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     info('Discord bot 情報を入力してください (空 Enter で既存値を保持)');
-    const applicationId = await ask(
+    const applicationId = await askEnvFirst(
       rl,
+      'MEX_SETUP_DISCORD_APPLICATION_ID',
       'application_id',
       existing?.discord.application_id,
     );
-    const guildId = await ask(rl, 'guild_id', existing?.discord.guild_id);
+    const guildId = await askEnvFirst(
+      rl,
+      'MEX_SETUP_DISCORD_GUILD_ID',
+      'guild_id',
+      existing?.discord.guild_id,
+    );
 
     info('channel ID (Developer Mode で右クリック → ID コピー):');
-    const customerMain = await ask(
+    const fallbackChannel = process.env.MEX_SETUP_DISCORD_CHANNEL_ID;
+    const customerMain = await askEnvFirst(
       rl,
+      'MEX_SETUP_DISCORD_CUSTOMER_MAIN_CHANNEL_ID',
       'customer_main channel_id',
-      existing?.discord.channels.customer_main,
+      existing?.discord.channels.customer_main || fallbackChannel,
     );
-    const customerAttention = await ask(
+    const customerAttention = await askEnvFirst(
       rl,
+      'MEX_SETUP_DISCORD_CUSTOMER_ATTENTION_CHANNEL_ID',
       'customer_attention channel_id',
-      existing?.discord.channels.customer_attention,
+      existing?.discord.channels.customer_attention || fallbackChannel,
     );
-    const customerPassive = await ask(
+    const customerPassive = await askEnvFirst(
       rl,
+      'MEX_SETUP_DISCORD_CUSTOMER_PASSIVE_CHANNEL_ID',
       'customer_passive channel_id',
-      existing?.discord.channels.customer_passive,
+      existing?.discord.channels.customer_passive || fallbackChannel,
     );
-    const operatorAlert = await ask(
+    const operatorAlert = await askEnvFirst(
       rl,
+      'MEX_SETUP_DISCORD_OPERATOR_ALERT_CHANNEL_ID',
       'operator_alert channel_id',
-      existing?.discord.channels.operator_alert,
+      existing?.discord.channels.operator_alert || fallbackChannel,
     );
 
     info('operator discord user ID (カンマ区切り、複数可):');
-    const operatorRaw = await ask(
+    const operatorRaw = await askEnvFirst(
       rl,
+      'MEX_SETUP_OPERATOR_USER_IDS',
       'operator_user_ids',
       (existing?.discord.operator_user_ids ?? []).join(','),
     );
@@ -172,7 +197,6 @@ async function main(): Promise<void> {
       .filter((s) => s.length > 0);
 
     if (!applicationId) fail('application_id は必須です');
-    if (!guildId) fail('guild_id は必須です');
 
     const next: Registry = {
       ...registry,

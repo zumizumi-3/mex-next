@@ -2,18 +2,12 @@
  * Slash command registrar.
  *
  * MeX exposes a single top-level `/mex` command with a sub-command
- * tree mirroring the natural-language intent vocabulary. This keeps
- * the slash surface tiny (one command) while still being discoverable.
- *
- * Sub-commands map 1:1 onto the intent names handled by
- * `src/handlers/index.ts` so the same handler set serves both surfaces.
+ * tree for power users. Natural language remains the primary surface;
+ * slash commands intentionally expose only the common customer actions
+ * and a small operator set.
  */
 
-import {
-  ApplicationCommandOptionType,
-  type ApplicationCommandData,
-  type Client,
-} from 'discord.js';
+import { ApplicationCommandOptionType, type ApplicationCommandData, type Client } from 'discord.js';
 import type { Logger } from 'pino';
 
 const MEX_COMMAND: ApplicationCommandData = {
@@ -59,44 +53,6 @@ const MEX_COMMAND: ApplicationCommandData = {
             },
           ],
         },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'publish-now',
-          description: '今すぐ投稿',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'publish_id',
-              description: '予約 ID',
-              required: false,
-            },
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'time_hint',
-              description: '時刻 (HH:MM)',
-              required: false,
-            },
-          ],
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'detail',
-          description: '予約詳細',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'publish_id',
-              description: '予約 ID',
-              required: false,
-            },
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'time_hint',
-              description: '時刻 (HH:MM)',
-              required: false,
-            },
-          ],
-        },
       ],
     },
     {
@@ -121,44 +77,6 @@ const MEX_COMMAND: ApplicationCommandData = {
     },
     {
       type: ApplicationCommandOptionType.SubcommandGroup,
-      name: 'target',
-      description: '追跡対象',
-      options: [
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'add',
-          description: '追跡対象を追加',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'handle',
-              description: 'X handle (@ なし)',
-              required: true,
-            },
-          ],
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'list',
-          description: '追跡対象一覧',
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'remove',
-          description: '追跡対象を外す',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'handle',
-              description: 'X handle (@ なし)',
-              required: true,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      type: ApplicationCommandOptionType.SubcommandGroup,
       name: 'automation',
       description: '自動運用',
       options: [
@@ -171,135 +89,6 @@ const MEX_COMMAND: ApplicationCommandData = {
           type: ApplicationCommandOptionType.Subcommand,
           name: 'enable-all',
           description: '自動運用を一括 ON',
-        },
-      ],
-    },
-    {
-      type: ApplicationCommandOptionType.SubcommandGroup,
-      name: 'cadence',
-      description: '投稿ペース',
-      options: [
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'set',
-          description: 'profile を設定',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'profile',
-              description: 'profile',
-              required: true,
-              choices: [
-                { name: 'light', value: 'light' },
-                { name: 'standard', value: 'standard' },
-                { name: 'aggressive', value: 'aggressive' },
-              ],
-            },
-          ],
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'skip-today',
-          description: '今日を skip',
-        },
-      ],
-    },
-    {
-      type: ApplicationCommandOptionType.SubcommandGroup,
-      name: 'seed',
-      description: 'コンテンツ seeding',
-      options: [
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'run',
-          description: 'N 本のドラフトを一気に生成',
-          options: [
-            {
-              type: ApplicationCommandOptionType.Integer,
-              name: 'count',
-              description: '生成本数 (1-13、既定 7)',
-              required: false,
-              minValue: 1,
-              maxValue: 13,
-            },
-            {
-              type: ApplicationCommandOptionType.Boolean,
-              name: 'approve_all',
-              description: '全件 schedule に流す',
-              required: false,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      type: ApplicationCommandOptionType.SubcommandGroup,
-      name: 'training',
-      description: '初期学習',
-      options: [
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'run',
-          description: '過去投稿から exemplar を蓄積',
-          options: [
-            {
-              type: ApplicationCommandOptionType.Integer,
-              name: 'count',
-              description: '取り込み本数 (5-200、既定 50)',
-              required: false,
-              minValue: 5,
-              maxValue: 200,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      type: ApplicationCommandOptionType.SubcommandGroup,
-      name: 'phase',
-      description: 'フェーズ アンケート',
-      options: [
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'start',
-          description: 'アンケート開始',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'cadence',
-              description: '頻度',
-              required: false,
-              choices: [
-                { name: '週次', value: 'weekly' },
-                { name: '月次', value: 'monthly' },
-                { name: '四半期', value: 'quarterly' },
-              ],
-            },
-          ],
-        },
-        {
-          type: ApplicationCommandOptionType.Subcommand,
-          name: 'status',
-          description: 'アンケート状況',
-          options: [
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'cadence',
-              description: '頻度で絞り込み',
-              required: false,
-              choices: [
-                { name: '週次', value: 'weekly' },
-                { name: '月次', value: 'monthly' },
-                { name: '四半期', value: 'quarterly' },
-              ],
-            },
-            {
-              type: ApplicationCommandOptionType.String,
-              name: 'session_id',
-              description: 'セッション ID で詳細',
-              required: false,
-            },
-          ],
         },
       ],
     },
@@ -330,6 +119,10 @@ const MEX_COMMAND: ApplicationCommandData = {
     },
   ],
 };
+
+export function buildSlashCommands(): ReadonlyArray<{ toJSON: () => unknown }> {
+  return [{ toJSON: () => MEX_COMMAND }];
+}
 
 export interface RegisterSlashOptions {
   logger?: Logger;
@@ -363,10 +156,7 @@ export async function registerSlashCommands(
  * Map a (subcommand-group, subcommand) pair into the matching intent name.
  * Returns 'unknown' if no mapping exists.
  */
-export function commandToIntent(
-  group: string | null,
-  subcommand: string,
-): string {
+export function commandToIntent(group: string | null, subcommand: string): string {
   if (!group) {
     if (subcommand === 'status') return 'status.show';
     if (subcommand === 'help') return 'help.show';
@@ -381,27 +171,11 @@ export function commandToIntent(
         return 'schedule.list';
       case 'cancel':
         return 'schedule.cancel';
-      case 'publish-now':
-        return 'schedule.publish_now';
-      case 'detail':
-        return 'schedule.detail';
       default:
         return 'unknown';
     }
   }
   if (group === 'post' && subcommand === 'create') return 'post.create';
-  if (group === 'target') {
-    switch (subcommand) {
-      case 'add':
-        return 'target.add';
-      case 'list':
-        return 'target.list';
-      case 'remove':
-        return 'target.remove';
-      default:
-        return 'unknown';
-    }
-  }
   if (group === 'automation') {
     switch (subcommand) {
       case 'status':
@@ -411,16 +185,6 @@ export function commandToIntent(
       default:
         return 'unknown';
     }
-  }
-  if (group === 'cadence') {
-    if (subcommand === 'skip-today') return 'cadence.skip_today';
-    if (subcommand === 'set') return 'cadence.set'; // resolved by caller using the `profile` option
-  }
-  if (group === 'seed' && subcommand === 'run') return 'seed.run';
-  if (group === 'training' && subcommand === 'run') return 'training.run';
-  if (group === 'phase') {
-    if (subcommand === 'start') return 'phase.questionnaire_start';
-    if (subcommand === 'status') return 'phase.questionnaire_status';
   }
   return 'unknown';
 }

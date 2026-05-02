@@ -89,7 +89,7 @@ const invokedDirectly =
   import.meta.url === new URL(`file://${process.argv[1]}`).href;
 
 if (invokedDirectly) {
-  regenerateKnowledgeCli().then((code) => {
+  void regenerateKnowledgeCli().then((code) => {
     process.exitCode = code;
   });
 }

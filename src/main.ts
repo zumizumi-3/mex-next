@@ -224,7 +224,6 @@ async function main(): Promise<void> {
     channelMap: config.discordChannelMap,
     logger: log,
   });
-  let repo: AccountRepo;
   const gitSync = new GitSync({
     accountRepoPath: config.accountRepo,
     logger: log.child({ subsystem: 'git-sync' }),
@@ -245,7 +244,7 @@ async function main(): Promise<void> {
     accountRepoPath: config.accountRepo,
     logger: log.child({ subsystem: 'exemplar-writer' }),
   });
-  repo = new AccountRepo(config.accountRepo, { gitSync, exemplarWriter, logger: log });
+  const repo = new AccountRepo(config.accountRepo, { gitSync, exemplarWriter, logger: log });
   void gitSync
     .healthCheck()
     .then((result) =>
@@ -442,7 +441,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  // eslint-disable-next-line no-console
   console.error('fatal:', error);
   process.exit(1);
 });

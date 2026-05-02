@@ -82,7 +82,7 @@ export interface HandleTargetLikeOptions extends TargetHandlerBase {
   xApi: XApiSurface;
 }
 
-export interface HandleTargetSkipOptions extends TargetHandlerBase {}
+export type HandleTargetSkipOptions = TargetHandlerBase;
 
 export interface HandleTargetSuggestOptions extends TargetHandlerBase {
   bridge: LlmProviderLike;
@@ -110,9 +110,7 @@ export interface HandleScheduleResult extends HandleResult {
 // like
 // ---------------------------------------------------------------------------
 
-export async function handleTargetLike(
-  opts: HandleTargetLikeOptions,
-): Promise<HandleResult> {
+export async function handleTargetLike(opts: HandleTargetLikeOptions): Promise<HandleResult> {
   const { repo, xApi, sessionId } = opts;
   const now = opts.now ?? defaultNow;
   const session = await readSession(repo, sessionId);
@@ -138,9 +136,7 @@ export async function handleTargetLike(
 // skip
 // ---------------------------------------------------------------------------
 
-export async function handleTargetSkip(
-  opts: HandleTargetSkipOptions,
-): Promise<HandleResult> {
+export async function handleTargetSkip(opts: HandleTargetSkipOptions): Promise<HandleResult> {
   const { repo, sessionId } = opts;
   const now = opts.now ?? defaultNow;
   const session = await readSession(repo, sessionId);
@@ -265,7 +261,11 @@ async function callBridgeForSuggestion(
     },
   });
   const data = response.data;
-  if (!data || typeof data !== 'object' || typeof (data as QuoteOrReplySuggestion).text !== 'string') {
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    typeof (data as QuoteOrReplySuggestion).text !== 'string'
+  ) {
     throw new Error(`llm returned invalid ${mode} suggestion`);
   }
   const text = (data as QuoteOrReplySuggestion).text.trim();
@@ -331,10 +331,7 @@ async function readSession(
   return map[sessionId] ?? null;
 }
 
-async function writeSession(
-  repo: AccountRepo,
-  session: TargetDiscoverySession,
-): Promise<void> {
+async function writeSession(repo: AccountRepo, session: TargetDiscoverySession): Promise<void> {
   const state = await repo.loadState();
   const map = { ...readSessionMap(state[TARGET_SESSION_KEY]) };
   map[session.event_id] = session;

@@ -104,7 +104,10 @@ export function findCursor(
  * Callers should use this *before* issuing the X API fetch and treat a
  * `true` result as "skip this run".
  */
-export function isCursorSuspended(cursor: PollCursor | undefined, now: Date | string = new Date()): boolean {
+export function isCursorSuspended(
+  cursor: PollCursor | undefined,
+  now: Date | string = new Date(),
+): boolean {
   if (!cursor || !cursor.suspended_until) return false;
   const deadline = new Date(cursor.suspended_until);
   if (Number.isNaN(deadline.getTime())) return false;
@@ -146,8 +149,9 @@ export function bumpErrorStreak(cursor: PollCursor, nowIso: string): PollCursor 
  * `suspended_until` cleared.
  */
 export function clearErrorStreak(cursor: PollCursor): PollCursor {
-  const { suspended_until: _suspended, ...rest } = cursor;
-  return { ...rest, errorStreak: 0 };
+  const next: PollCursor = { ...cursor, errorStreak: 0 };
+  delete next.suspended_until;
+  return next;
 }
 
 function matchesCursor(a: PollCursor, b: PollCursor): boolean {
@@ -168,5 +172,10 @@ function normalizeCursor(cursor: PollCursor): PollCursor {
 }
 
 function isPollCursorKind(value: unknown): value is PollCursorKind {
-  return value === 'mentions' || value === 'self_tweets' || value === 'target_tweets' || value === 'search';
+  return (
+    value === 'mentions' ||
+    value === 'self_tweets' ||
+    value === 'target_tweets' ||
+    value === 'search'
+  );
 }
