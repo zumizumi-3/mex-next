@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for MeX Next weekly retrospective ({ACCOUNT_ID})
+
+[Timer]
+OnCalendar=Mon *-*-* 07:00:00 Asia/Tokyo
+RandomizedDelaySec=60
+Persistent=true
+Unit=mex-weekly-retro-{ACCOUNT_ID}.service
+
+[Install]
+WantedBy=timers.target

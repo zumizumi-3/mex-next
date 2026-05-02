@@ -8,7 +8,7 @@ Type=simple
 Environment=HOME=/root
 EnvironmentFile=/etc/mex/{ACCOUNT_ID}.env
 WorkingDirectory=/opt/mex-next
-ExecStart=/usr/bin/doppler run -- /usr/bin/node /opt/mex-next/dist/main.js
+ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/main.js --account-id {ACCOUNT_ID}
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
