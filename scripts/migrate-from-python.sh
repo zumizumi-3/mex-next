@@ -85,6 +85,15 @@ step_backup() {
         cp /etc/systemd/system/mex-bot.service "/etc/systemd/system/mex-bot.service.python-bak-${stamp}"
         ok "旧 mex-bot.service も bak"
     fi
+    # Python の flock が残した *.lock (file) を削除する。
+    # Node の proper-lockfile は同名の *.lock (directory) を使うため
+    # file が残ってると ENOTDIR で詰まる。
+    for lock in "$ACCOUNT_REPO/state.json.lock" "$ACCOUNT_REPO/account.json.lock"; do
+        if [ -f "$lock" ]; then
+            rm -f "$lock"
+            ok "stale lock file 削除: $lock"
+        fi
+    done
 }
 
 # ============================================================================

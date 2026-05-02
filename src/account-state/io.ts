@@ -135,6 +135,21 @@ export async function withStateLock<T>(
     await writeJsonAtomic(statePath, {});
   }
 
+  // proper-lockfile creates a *directory* alongside the target named
+  // `<file>.lock`. Python (and other tooling) sometimes leave a *file*
+  // by the same name, which then makes proper-lockfile blow up with
+  // ENOTDIR on rmdir. Detect and remove stale lock files so the migration
+  // path from Python MeX is clean.
+  const stalePath = `${statePath}.lock`;
+  try {
+    const st = await fs.lstat(stalePath);
+    if (st.isFile()) {
+      await fs.unlink(stalePath).catch(() => undefined);
+    }
+  } catch {
+    // not present — fine
+  }
+
   const release = await lockfile.lock(statePath, {
     retries: {
       retries: 30,
