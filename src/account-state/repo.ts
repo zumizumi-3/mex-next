@@ -33,6 +33,11 @@ export interface WithStateResult<T> {
 export class AccountRepo {
   constructor(private readonly path: string) {}
 
+  /** account-state/types.ts の `AccountRepo` interface 互換 (posting/settings module で参照される). */
+  get accountRepoPath(): string {
+    return this.path;
+  }
+
   /** account.json への absolute path */
   get accountPath(): string {
     return join(this.path, 'account.json');
@@ -114,6 +119,52 @@ export class AccountRepo {
       await this.writeState(nextState);
       return result;
     });
+  }
+
+  /**
+   * Compat alias for `withState`. posting / settings の module は
+   * `withStateLock` 名で interface を持っているので、それを満たす。
+   */
+  async withStateLock<T>(
+    fn: (state: StateJson) => Promise<{ state: StateJson; result: T }>
+  ): Promise<T> {
+    return this.withState(fn);
+  }
+
+  /** Compat alias: `loadAccount` is the name many modules (posting/settings) use. */
+  async loadAccount(): Promise<AccountJson> {
+    const { value } = await this.readAccountWithMigration();
+    return value;
+  }
+
+  /** Compat alias: `loadState` for modules using the AccountRepoLike interface. */
+  async loadState(): Promise<StateJson> {
+    const { value } = await this.readStateWithMigration();
+    return value;
+  }
+
+  /** Compat alias for writers using `saveAccount`. */
+  async saveAccount(account: AccountJson): Promise<void> {
+    await this.writeAccount(account);
+  }
+
+  /** Compat alias for writers using `saveState`. */
+  async saveState(state: StateJson): Promise<void> {
+    await this.writeState(state);
+  }
+
+  /**
+   * Read draft.json text for a given content_id, or null if missing.
+   * Posting / scheduler が optional に依存。
+   */
+  async loadDraftText(contentId: string): Promise<{ text: string; topic: string } | null> {
+    const { draft } = await this.readContent(contentId);
+    if (!draft || typeof draft !== 'object') return null;
+    const d = draft as Record<string, unknown>;
+    const text = typeof d.text === 'string' ? d.text : typeof d.body === 'string' ? d.body : '';
+    const topic = typeof d.topic === 'string' ? d.topic : '';
+    if (!text) return null;
+    return { text, topic };
   }
 
   /**
