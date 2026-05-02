@@ -141,6 +141,18 @@ step_migrate_state() {
 # ============================================================================
 step_topup_doppler() {
     log "[6/11] Doppler secrets を mex-next 用に補完"
+    # 既存の service token を /etc/mex/<account>.env から source
+    # (root に doppler login が無くても CLI が動くように)
+    if [ -f "$ENV_FILE" ]; then
+        # shellcheck disable=SC1090
+        local prev_token="${DOPPLER_TOKEN:-}"
+        # shellcheck disable=SC1090
+        source "$ENV_FILE"
+        if [ -n "${DOPPLER_TOKEN:-}" ] && [ "${DOPPLER_TOKEN}" != "${prev_token}" ]; then
+            ok "DOPPLER_TOKEN を $ENV_FILE から読込"
+            export DOPPLER_TOKEN
+        fi
+    fi
     # 既存値の存在確認
     local has_anthropic discord_token
     has_anthropic=$(doppler secrets get ANTHROPIC_API_KEY \
@@ -173,13 +185,22 @@ step_topup_doppler() {
         --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
 
     # Python 版の channel id 候補を探す (旧名で入ってる可能性)
-    local legacy_main legacy_digest legacy_alert
+    local legacy_main legacy_digest legacy_alert legacy_single
     legacy_main=$(doppler secrets get DISCORD_CHANNEL_CUSTOMER_MAIN \
         --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
     legacy_digest=$(doppler secrets get DISCORD_CHANNEL_DAILY_DIGEST \
         --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
     legacy_alert=$(doppler secrets get DISCORD_CHANNEL_ALERTS \
         --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
+    # 単一チャネル運用の場合 (zumi-x など)
+    legacy_single=$(doppler secrets get DISCORD_CHANNEL_ID \
+        --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --plain 2>/dev/null || echo "")
+    # 単一チャネルなら全 role の default に流用
+    if [ -n "$legacy_single" ]; then
+        legacy_main="${legacy_main:-$legacy_single}"
+        legacy_digest="${legacy_digest:-$legacy_single}"
+        legacy_alert="${legacy_alert:-$legacy_single}"
+    fi
 
     if [ -z "$ch_attention" ]; then
         prompt_default "Customer attention channel ID (反応・承認系)" "${legacy_main:-}" ch_attention
