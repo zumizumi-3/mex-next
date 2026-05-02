@@ -119,6 +119,69 @@ const RetroSessionSchema = z
   })
   .passthrough();
 
+/**
+ * Onboarding wizard session (33-question collector).
+ * One per account, but stored as an array so historic sessions are kept
+ * (e.g. if a customer restarts).
+ */
+export const OnboardingSessionStateSchema = z.enum([
+  'created',
+  'asking',
+  'awaiting_answer',
+  'completed',
+  'cancelled',
+  'expired',
+]);
+export type OnboardingSessionState = z.infer<
+  typeof OnboardingSessionStateSchema
+>;
+
+export const OnboardingSessionSchema = z
+  .object({
+    id: z.string(),
+    state: OnboardingSessionStateSchema.default('created'),
+    current_question_id: z.string().default(''),
+    answers: z.record(z.unknown()).default({}),
+    created_at: z.string().default(''),
+    updated_at: z.string().default(''),
+    expires_at: z.string().default(''),
+    thread_id: z.string().nullable().default(null),
+    channel_id: z.string().nullable().default(null),
+  })
+  .passthrough();
+export type OnboardingSessionJson = z.infer<typeof OnboardingSessionSchema>;
+
+/**
+ * First-window collector session (5 questions, after onboarding).
+ * Decides the first active_window for the account.
+ */
+export const FirstWindowSessionStateSchema = z.enum([
+  'created',
+  'asking',
+  'awaiting_answer',
+  'completed',
+  'cancelled',
+  'expired',
+]);
+export type FirstWindowSessionState = z.infer<
+  typeof FirstWindowSessionStateSchema
+>;
+
+export const FirstWindowSessionSchema = z
+  .object({
+    id: z.string(),
+    state: FirstWindowSessionStateSchema.default('created'),
+    current_question_id: z.string().default(''),
+    answers: z.record(z.unknown()).default({}),
+    created_at: z.string().default(''),
+    updated_at: z.string().default(''),
+    expires_at: z.string().default(''),
+    thread_id: z.string().nullable().default(null),
+    channel_id: z.string().nullable().default(null),
+  })
+  .passthrough();
+export type FirstWindowSessionJson = z.infer<typeof FirstWindowSessionSchema>;
+
 const ActiveWindowSchema = z
   .object({
     status: z.string().default('needs_definition'),
@@ -184,6 +247,10 @@ export const StateJsonSchema = z
     // Retrospective
     weekly_retro_sessions: z.array(RetroSessionSchema).default([]),
     periodic_retro_sessions: z.array(RetroSessionSchema).default([]),
+
+    // Onboarding / first-window wizard
+    onboarding_sessions: z.array(OnboardingSessionSchema).default([]),
+    first_window_sessions: z.array(FirstWindowSessionSchema).default([]),
 
     // Cadence
     skip_dates: z.array(z.string()).default([]),

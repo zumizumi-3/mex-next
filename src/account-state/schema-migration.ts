@@ -34,6 +34,8 @@ const SESSION_DICT_TO_ARRAY_FIELDS = [
   'periodic_retro_sessions',
   'inbound_quote_sessions',
   'engagement_campaign_sessions',
+  'onboarding_sessions',
+  'first_window_sessions',
 ] as const;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

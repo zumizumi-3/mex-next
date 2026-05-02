@@ -46,6 +46,9 @@ export type IntentName =
   | 'cadence.skip_today'
   | 'status.show'
   | 'help.show'
+  | 'onboard.start'
+  | 'onboard.status'
+  | 'onboard.cancel'
   | 'unknown';
 
 export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
@@ -65,6 +68,9 @@ export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'cadence.skip_today',
   'status.show',
   'help.show',
+  'onboard.start',
+  'onboard.status',
+  'onboard.cancel',
   'unknown',
 ]);
 
@@ -82,6 +88,7 @@ export const DESTRUCTIVE_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>(
   'cadence.set_light',
   'cadence.set_standard',
   'cadence.set_aggressive',
+  'onboard.cancel',
 ]);
 
 /**
@@ -96,6 +103,7 @@ export const DISPLAY_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'automation.status',
   'status.show',
   'help.show',
+  'onboard.status',
 ]);
 
 export interface IntentResult {
@@ -328,6 +336,8 @@ function defaultConfirmationMessage(
       return '投稿ペースを Standard に切り替えますか？';
     case 'cadence.set_aggressive':
       return '投稿ペースを Aggressive に切り替えますか？';
+    case 'onboard.cancel':
+      return '進行中のオンボーディングを中断しますか？';
     default:
       return '実行してよろしいですか？';
   }
