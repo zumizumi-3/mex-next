@@ -44,6 +44,7 @@ export const SUPPORTED_INTENT_NAMES: readonly string[] = [
   'phase.questionnaire_start',
   'phase.questionnaire_status',
   'system.update',
+  'system.regenerate_knowledge',
   'unknown',
 ] as const;
 
@@ -69,13 +70,14 @@ const INTENT_ARG_SCHEMA_LINES = [
   'training.run = {count?: number (5-200)}',
   "phase.questionnaire_start = {cadence?: 'weekly'|'monthly'|'quarterly'}",
   "phase.questionnaire_status = {cadence?: 'weekly'|'monthly'|'quarterly', session_id?: string}",
+  'system.regenerate_knowledge = no args',
   'unknown = no args (use this when the request is unclear)',
 ];
 
 const INTENT_RULES = [
   'Confirmation is REQUIRED (confirmation_needed=true) for any intent that cancels, ' +
     'deletes, immediately publishes, or globally changes automation. Examples: schedule.cancel, ' +
-    'schedule.publish_now, cadence.skip_today, automation.enable_all, target.remove, cadence.set_*',
+    'schedule.publish_now, cadence.skip_today, automation.enable_all, target.remove, cadence.set_*, system.regenerate_knowledge',
   'Confirmation is NOT required for display-only intents: schedule.list, schedule.detail, ' +
     'target.list, automation.status, status.show, help.show, onboard.status.',
   'onboard.cancel REQUIRES confirmation. onboard.start does NOT need confirmation.',
@@ -232,6 +234,33 @@ export const INTENT_FEW_SHOTS: readonly IntentExample[] = [
       args: {},
       confirmation_needed: true,
       confirmation_message: 'mex-bot を最新版に更新しますか? (再起動を伴います)',
+    },
+  },
+  {
+    user: 'knowledge を再生成して',
+    result: {
+      intent: 'system.regenerate_knowledge',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: 'knowledge files を account.json から再生成しますか？',
+    },
+  },
+  {
+    user: 'AGENTS.md を更新',
+    result: {
+      intent: 'system.regenerate_knowledge',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: 'knowledge files を account.json から再生成しますか？',
+    },
+  },
+  {
+    user: 'persona / brand を再生成',
+    result: {
+      intent: 'system.regenerate_knowledge',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: 'knowledge files を account.json から再生成しますか？',
     },
   },
   {

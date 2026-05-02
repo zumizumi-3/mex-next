@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { handleSystemUpdate, isOperator } from '../../../src/handlers/system.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  handleSystemRegenerateKnowledge,
+  handleSystemUpdate,
+  isOperator,
+} from '../../../src/handlers/system.js';
 import { setupHandlerTest, type TestHandlerScaffold } from './test-helpers.js';
 
 let scaf: TestHandlerScaffold;
@@ -99,5 +103,45 @@ describe('handleSystemUpdate', () => {
       {},
     );
     expect(result.tag).toBe('system.update.unauthorized');
+  });
+});
+
+describe('handleSystemRegenerateKnowledge', () => {
+  it('operator が regenerate_knowledge → repo.writeKnowledgeFiles を呼ぶ', async () => {
+    scaf = await setupHandlerTest({
+      account: {
+        account_id: 'zumi-x',
+        display_name: 'Zumi',
+        voice_profile: { default_character: 'practical_operator' },
+      },
+    });
+    const spy = vi.spyOn(scaf.repo, 'writeKnowledgeFiles');
+    const result = await handleSystemRegenerateKnowledge(
+      {
+        ...scaf.ctx,
+        operatorDiscordUserIds: ['operator-1'],
+        requesterUserId: 'operator-1',
+      },
+      {},
+    );
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(result.tag).toBe('system.regenerate_knowledge.ok');
+    expect(result.content).toContain('AGENTS.md');
+  });
+
+  it('non-operator は unauthorized', async () => {
+    scaf = await setupHandlerTest();
+    const spy = vi.spyOn(scaf.repo, 'writeKnowledgeFiles');
+    const result = await handleSystemRegenerateKnowledge(
+      {
+        ...scaf.ctx,
+        operatorDiscordUserIds: ['operator-1'],
+        requesterUserId: 'attacker-99',
+      },
+      {},
+    );
+    expect(spy).not.toHaveBeenCalled();
+    expect(result.tag).toBe('system.regenerate_knowledge.unauthorized');
+    expect(result.content).toContain('operator');
   });
 });

@@ -1,14 +1,14 @@
 /**
- * Automation preflight — 10 hard gates.
+ * Automation preflight — 11 gates.
  *
- * 起動 / 自動投稿 cycle に入る前に「明確に修正可能な fail」を 10 個に
+ * 起動 / 自動投稿 cycle に入る前に「明確に修正可能な fail」を 11 個に
  * 整理して止めるための gate 集合。Python 版
  * (`runtime/scripts/automation_preflight.py`) と同じ趣旨で、各 gate は
- * `pass` / `fail` / `skip` の `GateResult` を返す。
+ * `pass` / `fail` / `skip` / `warn` の `GateResult` を返す。
  *
  * 失敗時 (`fail`) は `runPreflight().ok = false` になり、
  * `preflight-gate.ts` の orchestrator が operator escalation を起動する。
- * `skip` は単に「この環境には適用しない」という意味で、ok 判定には
+ * `warn` は operator に通知するが起動は止めない。`skip` は単に「この環境には適用しない」という意味で、ok 判定には
  * 影響しない (例: 本番に doppler を使わず env mode の場合)。
  */
 
@@ -20,11 +20,12 @@ import {
   type AccountJson,
   type StateJson,
 } from '../account-state/index.js';
+import { buildKnowledgeFiles } from '../account-state/knowledge-builder.js';
 import type { AccountRepo } from '../account-state/repo.js';
 import type { AppConfig } from '../config.js';
 import type { XApiSurface } from '../x-api/types.js';
 
-export type GateStatus = 'pass' | 'fail' | 'skip';
+export type GateStatus = 'pass' | 'fail' | 'skip' | 'warn';
 
 export interface GateResult {
   readonly name: string;
@@ -37,6 +38,7 @@ export interface PreflightResult {
   readonly ok: boolean;
   readonly gates: readonly GateResult[];
   readonly failed: readonly GateResult[];
+  readonly warned: readonly GateResult[];
 }
 
 export interface RunPreflightOpts {
@@ -76,7 +78,7 @@ const MIN_FREE_MEMORY_BYTES = 256 * 1024 * 1024; // 256MB
 const MIN_NODE_MAJOR = 20;
 
 /**
- * 10 ゲートを順番に評価し、ok=true/false の summary を返す。
+ * 11 ゲートを順番に評価し、ok=true/false の summary を返す。
  *
  * gate の数 / 順序は固定。Python 版と歩調を合わせるため、
  * 並列化はしない (出力ログが追いやすい)。
@@ -89,6 +91,12 @@ export async function runPreflight(opts: RunPreflightOpts): Promise<PreflightRes
   const gates: GateResult[] = [];
   gates.push(await gateAccountJsonPresent(account));
   gates.push(await gateStateJsonPresent(state));
+  gates.push(
+    await gateKnowledgeFiles({
+      repo: opts.repo,
+      accountRepoPath: opts.config.accountRepo,
+    }),
+  );
   gates.push(gateDiscordBotTokenPresent(opts.config));
   gates.push(gateAnthropicApiKeyPresent(opts.config));
   gates.push(gateXApiCredentialsPresent(opts.config));
@@ -104,10 +112,12 @@ export async function runPreflight(opts: RunPreflightOpts): Promise<PreflightRes
   gates.push(gateServerRuntimeOk(ctx.nodeVersion, ctx.freeMemoryBytes));
 
   const failed = gates.filter((g) => g.status === 'fail');
+  const warned = gates.filter((g) => g.status === 'warn');
   return {
     ok: failed.length === 0,
     gates,
     failed,
+    warned,
   };
 }
 
@@ -190,7 +200,146 @@ async function gateStateJsonPresent(state: ReadOutcome<StateJson>): Promise<Gate
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: DISCORD_BOT_TOKEN present
+// Gate 3: knowledge markdown files present + synced with account.json
+// ---------------------------------------------------------------------------
+
+const KNOWLEDGE_GATE_NAME = 'knowledge_files_present_and_synced';
+
+async function gateKnowledgeFiles(opts: {
+  repo: AccountRepo;
+  accountRepoPath: string;
+}): Promise<GateResult> {
+  let account: AccountJson;
+  let expected: ReturnType<typeof buildKnowledgeFiles>;
+  try {
+    account = await opts.repo.loadAccount();
+    expected = buildKnowledgeFiles(account);
+  } catch (err) {
+    return {
+      name: KNOWLEDGE_GATE_NAME,
+      status: 'fail',
+      message: `knowledge files の期待値を生成できない: ${errorMessage(err)}`,
+      hint: 'account.json の schema / migration を確認',
+    };
+  }
+
+  const contents = new Map<string, string>();
+  const missing: string[] = [];
+  const empty: string[] = [];
+  for (const name of Object.keys(expected)) {
+    const filePath = path.join(opts.accountRepoPath, name);
+    try {
+      const data = await fs.readFile(filePath);
+      if (data.byteLength === 0) {
+        empty.push(name);
+      }
+      contents.set(name, data.toString('utf-8'));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        missing.push(name);
+      } else {
+        return {
+          name: KNOWLEDGE_GATE_NAME,
+          status: 'fail',
+          message: `${name} を読めない: ${errorMessage(err)}`,
+          hint: knowledgeRegenerateHint(opts.accountRepoPath),
+        };
+      }
+    }
+  }
+
+  if (missing.length > 0 || empty.length > 0) {
+    const parts = [
+      missing.length > 0 ? `missing=${missing.join(', ')}` : '',
+      empty.length > 0 ? `empty=${empty.join(', ')}` : '',
+    ].filter(Boolean);
+    return {
+      name: KNOWLEDGE_GATE_NAME,
+      status: 'fail',
+      message: parts.join(' / '),
+      hint: knowledgeRegenerateHint(opts.accountRepoPath),
+    };
+  }
+
+  const missingKeys = findMissingKnowledgeKeys(account, contents);
+  if (missingKeys.length >= 3) {
+    return {
+      name: KNOWLEDGE_GATE_NAME,
+      status: 'fail',
+      message: `${missingKeys.length} 個の重要キーが knowledge files に見つからない: ${missingKeys.slice(0, 6).join(', ')}`,
+      hint: knowledgeRegenerateHint(opts.accountRepoPath),
+    };
+  }
+  if (missingKeys.length > 0) {
+    return {
+      name: KNOWLEDGE_GATE_NAME,
+      status: 'warn',
+      message: `${missingKeys.length} 個の重要キーが account.json と乖離: ${missingKeys.join(', ')}`,
+      hint: knowledgeRegenerateHint(opts.accountRepoPath),
+    };
+  }
+
+  return {
+    name: KNOWLEDGE_GATE_NAME,
+    status: 'pass',
+    message: `${Object.keys(expected).length} files present and synced`,
+  };
+}
+
+function findMissingKnowledgeKeys(
+  account: AccountJson,
+  contents: ReadonlyMap<string, string>,
+): string[] {
+  const missing: string[] = [];
+  const agentsKeys = unique([
+    text(account.account_id),
+    text(account.display_name),
+    archetypeKey(account),
+    ...primaryThemes(account),
+    ...hotZoneLabels(account),
+  ]);
+
+  for (const file of ['AGENTS.md', 'CLAUDE.md']) {
+    const content = contents.get(file) ?? '';
+    for (const key of agentsKeys) {
+      if (!content.includes(key)) missing.push(`${file}:${key}`);
+    }
+  }
+
+  const personaCandidates = unique([
+    archetypeKey(account),
+    normalizeHandle(valueAt(account, 'x_handle') ?? valueAt(account, 'x_username')),
+  ]);
+  if (personaCandidates.length > 0) {
+    const content = contents.get('persona.md') ?? '';
+    const found = personaCandidates.some((key) =>
+      key.startsWith('@') ? content.includes(key) : content.includes(key) || content.includes(`@${key}`),
+    );
+    if (!found) missing.push(`persona.md:${personaCandidates.join('|')}`);
+  }
+
+  const brandContent = contents.get('brand.md') ?? '';
+  for (const key of unique([...primaryThemes(account), ...forbiddenItems(account)])) {
+    if (!brandContent.includes(key)) missing.push(`brand.md:${key}`);
+  }
+
+  const targetsContent = contents.get('targets.md') ?? '';
+  for (const handle of trackedTargetHandles(account)) {
+    if (!targetsContent.includes(handle) && !targetsContent.includes(`@${handle}`)) {
+      missing.push(`targets.md:${handle}`);
+    }
+  }
+
+  return missing;
+}
+
+function knowledgeRegenerateHint(accountRepoPath: string): string {
+  return `node dist/scripts/regenerate-knowledge.js --account-repo ${accountRepoPath}`;
+}
+
+// ---------------------------------------------------------------------------
+// Gate 4: DISCORD_BOT_TOKEN present
 // ---------------------------------------------------------------------------
 
 function gateDiscordBotTokenPresent(config: AppConfig): GateResult {
@@ -558,6 +707,100 @@ function firstLine(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return '';
   return trimmed.split('\n')[0];
+}
+
+function archetypeKey(account: AccountJson): string {
+  const persona = objectOf(account.persona);
+  const voice = objectOf(account.voice_profile);
+  return text(
+    valueAt(persona, 'archetype_key') ??
+      valueAt(persona, 'style') ??
+      valueAt(voice, 'default_character'),
+  );
+}
+
+function primaryThemes(account: AccountJson): string[] {
+  const brand = objectOf(account.brand);
+  return firstNonEmptyList(
+    valueAt(brand, 'primary_themes'),
+    valueAt(brand, 'core_thesis'),
+    valueAt(brand, 'problem_space'),
+    valueAt(brand, 'promise'),
+  );
+}
+
+function forbiddenItems(account: AccountJson): string[] {
+  const brand = objectOf(account.brand);
+  const voice = objectOf(account.voice_profile);
+  return unique([
+    ...listOf(valueAt(brand, 'forbidden')),
+    ...listOf(valueAt(brand, 'avoid_topics')),
+    ...listOf(valueAt(brand, 'stop_words')),
+    ...listOf(valueAt(voice, 'forbidden_tones')),
+  ]);
+}
+
+function hotZoneLabels(account: AccountJson): string[] {
+  return (account.operating_cadence?.hot_zones ?? [])
+    .map((zone) => text(zone.label))
+    .filter(Boolean);
+}
+
+function trackedTargetHandles(account: AccountJson): string[] {
+  const tracked = objectOf(account.x_action_system?.tracked_targets);
+  return listOf(valueAt(tracked, 'usernames'))
+    .map((handle) => normalizeHandle(handle))
+    .filter(Boolean);
+}
+
+function firstNonEmptyList(...values: readonly unknown[]): string[] {
+  for (const value of values) {
+    const items = listOf(value);
+    if (items.length > 0) return items;
+  }
+  return [];
+}
+
+function listOf(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => text(item)).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[,、\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>)
+      .flatMap((item) => listOf(item))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeHandle(value: unknown): string {
+  const raw = text(value);
+  return raw.startsWith('@') ? raw.slice(1) : raw;
+}
+
+function text(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function objectOf(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function valueAt(value: unknown, key: string): unknown {
+  return objectOf(value)[key];
+}
+
+function unique(items: readonly string[]): string[] {
+  return [...new Set(items.map((item) => item.trim()).filter(Boolean))];
 }
 
 function errorMessage(err: unknown): string {

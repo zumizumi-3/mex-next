@@ -1,8 +1,9 @@
 /**
  * Preflight + escalation の orchestrator。
  *
- * `runPreflight` で 10 gate を評価し、`fail` があれば
+ * `runPreflight` で 11 gate を評価し、`fail` があれば
  * `escalateOperator` で operator alert channel に通知する。
+ * knowledge files の `warn` は起動を止めず、再生成案内だけ通知する。
  *
  * 同 reason は dedup されるので、preflight が連続で失敗しても
  * Discord に同じメッセージが連投されない。
@@ -73,24 +74,40 @@ export async function preflightOrEscalate(
       .catch(() => undefined);
   }
 
-  if (result.failed.length === 0) {
+  if (result.failed.length > 0) {
+    const summary = summarizeFailures(result.failed);
+    const reason = buildReason(result.failed);
+    const detail = buildDetail(result.failed);
+
+    await escalateOperator({
+      reason,
+      detail,
+      hint: summary.firstHint,
+      accountId: opts.config.accountId,
+      poster: opts.poster,
+      config: opts.config,
+      repo: opts.repo,
+      now: opts.now,
+    });
+
     return result;
   }
 
-  const summary = summarizeFailures(result.failed);
-  const reason = buildReason(result.failed);
-  const detail = buildDetail(result.failed);
-
-  await escalateOperator({
-    reason,
-    detail,
-    hint: summary.firstHint,
-    accountId: opts.config.accountId,
-    poster: opts.poster,
-    config: opts.config,
-    repo: opts.repo,
-    now: opts.now,
-  });
+  const knowledgeWarn = result.warned.find(
+    (gate) => gate.name === 'knowledge_files_present_and_synced',
+  );
+  if (knowledgeWarn) {
+    await escalateOperator({
+      reason: 'preflight warning: knowledge_files_present_and_synced',
+      detail: buildKnowledgeWarnDetail(knowledgeWarn, opts.config.accountRepo),
+      hint: knowledgeWarn.hint,
+      accountId: opts.config.accountId,
+      poster: opts.poster,
+      config: opts.config,
+      repo: opts.repo,
+      now: opts.now,
+    });
+  }
 
   return result;
 }
@@ -120,4 +137,14 @@ function buildDetail(failed: readonly GateResult[]): string {
       return `- ${f.name}: ${f.message}${hint}`;
     })
     .join('\n');
+}
+
+function buildKnowledgeWarnDetail(gate: GateResult, accountRepoPath: string): string {
+  return [
+    '⚠️ knowledge files (AGENTS.md / persona.md / 等) が account.json と乖離しています。',
+    `gate: ${gate.message}`,
+    '復旧:',
+    `  cd /opt/mex-next && node dist/scripts/regenerate-knowledge.js --account-repo ${accountRepoPath}`,
+    'または bot に「knowledge を再生成して」と話しかけてください。',
+  ].join('\n');
 }

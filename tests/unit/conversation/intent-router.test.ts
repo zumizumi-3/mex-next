@@ -118,6 +118,20 @@ describe('classifyIntent — happy path', () => {
     expect(result.intent).toBe('help.show');
     expect(result.confirmationNeeded).toBe(false);
   });
+
+  it('「knowledge を再生成して」→ system.regenerate_knowledge / confirmation forced', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'system.regenerate_knowledge',
+        args: {},
+        confirmation_needed: false,
+      }),
+    );
+    const result = await classifyIntent({ userText: 'knowledge を再生成して', bridge });
+    expect(result.intent).toBe('system.regenerate_knowledge');
+    expect(result.confirmationNeeded).toBe(true);
+    expect(result.confirmationMessage).toContain('knowledge files');
+  });
 });
 
 describe('classifyIntent — safety overrides (LLM hallucination)', () => {
@@ -245,12 +259,13 @@ describe('classifyIntent — fallbacks', () => {
 });
 
 describe('INTENT_FEW_SHOTS coverage', () => {
-  it('contains examples for seed.run / training.run / phase.questionnaire_*', () => {
+  it('contains examples for seed.run / training.run / phase.questionnaire_* / regenerate knowledge', () => {
     const intents = new Set(INTENT_FEW_SHOTS.map((ex) => ex.result.intent));
     expect(intents.has('seed.run')).toBe(true);
     expect(intents.has('training.run')).toBe(true);
     expect(intents.has('phase.questionnaire_start')).toBe(true);
     expect(intents.has('phase.questionnaire_status')).toBe(true);
+    expect(intents.has('system.regenerate_knowledge')).toBe(true);
   });
 });
 

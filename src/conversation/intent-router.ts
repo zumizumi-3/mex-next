@@ -54,6 +54,7 @@ export type IntentName =
   | 'phase.questionnaire_start'
   | 'phase.questionnaire_status'
   | 'system.update'
+  | 'system.regenerate_knowledge'
   | 'unknown';
 
 export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
@@ -81,6 +82,7 @@ export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'phase.questionnaire_start',
   'phase.questionnaire_status',
   'system.update',
+  'system.regenerate_knowledge',
   'unknown',
 ]);
 
@@ -100,6 +102,7 @@ export const DESTRUCTIVE_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>(
   'cadence.set_aggressive',
   'onboard.cancel',
   'system.update',
+  'system.regenerate_knowledge',
 ]);
 
 /**
@@ -402,6 +405,8 @@ function defaultConfirmationMessage(
       return '投稿ペースを Aggressive に切り替えますか？';
     case 'onboard.cancel':
       return '進行中のオンボーディングを中断しますか？';
+    case 'system.regenerate_knowledge':
+      return 'knowledge files を account.json から再生成しますか？';
     default:
       return '実行してよろしいですか？';
   }

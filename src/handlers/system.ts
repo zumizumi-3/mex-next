@@ -3,6 +3,8 @@
  *
  * - system.update — kick `mex-self-update.service` to git pull + rebuild
  *   + restart the bot. Operator-only because it restarts the process.
+ * - system.regenerate_knowledge — rewrite account knowledge markdown files
+ *   from account.json. Operator-only because it overwrites files.
  */
 
 import { execa } from 'execa';
@@ -69,4 +71,24 @@ export async function handleSystemUpdate(
       tag: 'system.update.failed',
     };
   }
+}
+
+export async function handleSystemRegenerateKnowledge(
+  ctx: HandlerContext,
+  _args: HandlerArgs,
+): Promise<HandlerResult> {
+  if (!isOperator(ctx)) {
+    return {
+      content: `${STATE_EMOJI.attention} knowledge files の再生成は operator 専用機能です。OPERATOR_DISCORD_USER_IDS に登録された Discord アカウントから実行してください。`,
+      tag: 'system.regenerate_knowledge.unauthorized',
+    };
+  }
+
+  const account = await ctx.repo.loadAccount();
+  await ctx.repo.writeKnowledgeFiles(account);
+  return {
+    content:
+      '✅ knowledge files を再生成しました (AGENTS.md / CLAUDE.md / persona.md / brand.md / voice-guide.md / targets.md / README.md)',
+    tag: 'system.regenerate_knowledge.ok',
+  };
 }

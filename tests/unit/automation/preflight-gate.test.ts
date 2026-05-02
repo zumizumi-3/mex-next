@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccountRepo } from '../../../src/account-state/repo.js';
@@ -16,12 +16,26 @@ let workDir: string;
 let registryDir: string;
 let registryPath: string;
 
+const validAccountJson = {
+  account_id: 'zumi-x',
+  display_name: 'Zumi',
+  x_handle: 'zumi_dev',
+  voice_profile: { default_character: 'practical_operator' },
+  brand: { primary_themes: ['運用設計'], forbidden: ['絶対儲かる'] },
+  operating_cadence: {
+    profile: 'light',
+    hot_zones: [{ start: '06:00', end: '09:00', label: '朝' }],
+  },
+  x_action_system: { tracked_targets: { usernames: ['tanaka_san'] } },
+};
+
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'mex-next-prefgate-'));
   registryDir = await mkdtemp(join(tmpdir(), 'mex-next-prefgate-reg-'));
   registryPath = join(registryDir, 'accounts-registry.json');
-  await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+  await writeFile(join(workDir, 'account.json'), JSON.stringify(validAccountJson), 'utf-8');
   await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+  await new AccountRepo(workDir).writeKnowledgeFiles(validAccountJson as never);
   await mkdir(join(workDir, '.git'), { recursive: true });
   await writeFile(
     registryPath,
@@ -131,6 +145,64 @@ describe('preflightOrEscalate', () => {
     const call = poster.postEscalation.mock.calls[0][0];
     expect(call.content).toContain('discord_bot_token_present');
     expect(call.content).toContain('hint');
+  });
+
+  it('knowledge warn の場合に escalation が 1 回呼ばれる', async () => {
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+      const file = join(workDir, name);
+      const current = await readFile(file, 'utf-8');
+      await writeFile(file, current.replaceAll('zumi-x', 'old-zumi'), 'utf-8');
+    }
+
+    const poster = makePoster();
+    const t0 = new Date('2026-05-02T10:00:00Z');
+    const t1 = new Date('2026-05-02T10:03:00Z');
+    const args = {
+      repo: new AccountRepo(workDir),
+      config: makeConfig(),
+      poster,
+      accountsRegistryPath: registryPath,
+      preflightOverrides: {
+        runner: okRunner,
+        diskCheck: okDisk,
+        freeMemoryBytes: () => 1024 * 1024 * 1024,
+        nodeVersion: 'v20.10.0',
+      },
+    };
+
+    const first = await preflightOrEscalate({ ...args, now: () => t0 });
+    const second = await preflightOrEscalate({ ...args, now: () => t1 });
+
+    expect(first.ok).toBe(true);
+    expect(first.warned[0]?.name).toBe('knowledge_files_present_and_synced');
+    expect(second.ok).toBe(true);
+    expect(poster.postEscalation).toHaveBeenCalledTimes(1);
+    const call = poster.postEscalation.mock.calls[0][0];
+    expect(call.content).toContain('knowledge files');
+    expect(call.content).toContain('regenerate-knowledge.js');
+  });
+
+  it('knowledge fail の場合は fail escalation として通知する', async () => {
+    await rm(join(workDir, 'AGENTS.md'), { force: true });
+    const poster = makePoster();
+    const result = await preflightOrEscalate({
+      repo: new AccountRepo(workDir),
+      config: makeConfig(),
+      poster,
+      accountsRegistryPath: registryPath,
+      preflightOverrides: {
+        runner: okRunner,
+        diskCheck: okDisk,
+        freeMemoryBytes: () => 1024 * 1024 * 1024,
+        nodeVersion: 'v20.10.0',
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(poster.postEscalation).toHaveBeenCalledTimes(1);
+    const call = poster.postEscalation.mock.calls[0][0];
+    expect(call.content).toContain('preflight failed');
+    expect(call.content).toContain('knowledge_files_present_and_synced');
+    expect(call.content).not.toContain('account.json と乖離しています');
   });
 
   it('同じ fail を 2 回続けても dedup で escalation は 1 回だけ', async () => {

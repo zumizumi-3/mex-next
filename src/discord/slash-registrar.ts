@@ -323,6 +323,11 @@ const MEX_COMMAND: ApplicationCommandData = {
       name: 'update',
       description: 'mex-bot を最新版に自己更新する (operator 専用)',
     },
+    {
+      type: ApplicationCommandOptionType.Subcommand,
+      name: 'regenerate-knowledge',
+      description: 'knowledge files を account.json から再生成する (operator 専用)',
+    },
   ],
 };
 
@@ -367,6 +372,7 @@ export function commandToIntent(
     if (subcommand === 'help') return 'help.show';
     if (subcommand === 'go') return 'status.show'; // /mex go acts like a quick status pulse
     if (subcommand === 'update') return 'system.update';
+    if (subcommand === 'regenerate-knowledge') return 'system.regenerate_knowledge';
     return 'unknown';
   }
   if (group === 'schedule') {

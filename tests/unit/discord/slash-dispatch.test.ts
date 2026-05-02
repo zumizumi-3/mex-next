@@ -120,6 +120,27 @@ describe('dispatchSlashCommand', () => {
     expect(edits[0]).toContain('self-update');
   });
 
+  it('routes /mex regenerate-knowledge to system.regenerate_knowledge intent', async () => {
+    let invokedIntent: string | null = null;
+    const handler: Handler = async (): Promise<HandlerResult> => {
+      invokedIntent = 'system.regenerate_knowledge';
+      return { content: 'knowledge regenerated' };
+    };
+    const handlers: HandlersMap = { 'system.regenerate_knowledge': handler };
+    const { interaction, edits } = makeMockInteraction({
+      userId: 'op-1',
+      subcommand: 'regenerate-knowledge',
+      subcommandGroup: null,
+    });
+    await dispatchSlashCommand({
+      interaction,
+      handlers,
+      handlerContext: makeBaseContext(),
+    });
+    expect(invokedIntent).toBe('system.regenerate_knowledge');
+    expect(edits[0]).toContain('knowledge');
+  });
+
   it('passes requesterUserId=null when interaction has no user', async () => {
     let observedRequester: string | null | undefined = undefined;
     const handler: Handler = async (ctx: HandlerContext): Promise<HandlerResult> => {

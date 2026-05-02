@@ -1,9 +1,9 @@
 /**
- * Unit tests for `runPreflight` — verifies each of the 10 hard gates.
+ * Unit tests for `runPreflight` — verifies each of the 11 gates.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccountRepo } from '../../../src/account-state/repo.js';
@@ -20,7 +20,23 @@ let registryPath: string;
 
 const validAccountJson = {
   account_id: 'zumi-x',
-  operating_cadence: { profile: 'light' },
+  display_name: 'Zumi',
+  x_handle: 'zumi_dev',
+  voice_profile: {
+    default_character: 'practical_operator',
+    forbidden_tones: ['煽り'],
+  },
+  brand: {
+    primary_themes: ['運用設計', '副業導線'],
+    forbidden: ['絶対儲かる'],
+  },
+  operating_cadence: {
+    profile: 'light',
+    hot_zones: [{ start: '06:00', end: '09:00', label: '朝' }],
+  },
+  x_action_system: {
+    tracked_targets: { usernames: ['tanaka_san', 'sato_dev'] },
+  },
 };
 const validStateJson = {
   account_id: 'zumi-x',
@@ -34,6 +50,7 @@ beforeEach(async () => {
 
   await writeFile(join(workDir, 'account.json'), JSON.stringify(validAccountJson), 'utf-8');
   await writeFile(join(workDir, 'state.json'), JSON.stringify(validStateJson), 'utf-8');
+  await new AccountRepo(workDir).writeKnowledgeFiles(validAccountJson as never);
   // git repo にする (account_repo 直下を git で init 済みに見せる)
   await mkdir(join(workDir, '.git'), { recursive: true });
   await writeFile(
@@ -128,11 +145,13 @@ describe('runPreflight', () => {
     const result = await runPreflight(defaultArgs());
     expect(result.ok).toBe(true);
     expect(result.failed).toHaveLength(0);
-    expect(result.gates).toHaveLength(10);
+    expect(result.warned).toHaveLength(0);
+    expect(result.gates).toHaveLength(11);
     const names = result.gates.map((g) => g.name);
     expect(names).toEqual([
       'account_json_present',
       'state_json_present',
+      'knowledge_files_present_and_synced',
       'discord_bot_token_present',
       'anthropic_api_key_present',
       'x_api_credentials_present',
@@ -158,6 +177,47 @@ describe('runPreflight', () => {
     const gate = result.gates.find((g) => g.name === 'state_json_present');
     expect(gate?.status).toBe('fail');
     expect(result.ok).toBe(false);
+  });
+
+  it('knowledge files 全部存在 + 内容 sync → pass', async () => {
+    const result = await runPreflight(defaultArgs());
+    const gate = result.gates.find((g) => g.name === 'knowledge_files_present_and_synced');
+    expect(gate?.status).toBe('pass');
+    expect(result.warned).toHaveLength(0);
+    expect(result.ok).toBe(true);
+  });
+
+  it('knowledge files 不在 → fail', async () => {
+    for (const name of [
+      'AGENTS.md',
+      'CLAUDE.md',
+      'persona.md',
+      'brand.md',
+      'voice-guide.md',
+      'targets.md',
+      'README.md',
+    ]) {
+      await rm(join(workDir, name), { force: true });
+    }
+    const result = await runPreflight(defaultArgs());
+    const gate = result.gates.find((g) => g.name === 'knowledge_files_present_and_synced');
+    expect(gate?.status).toBe('fail');
+    expect(gate?.message).toContain('missing=');
+    expect(result.ok).toBe(false);
+  });
+
+  it('knowledge files あるが account_id だけ古い → warn', async () => {
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+      const file = join(workDir, name);
+      const current = await readFile(file, 'utf-8');
+      await writeFile(file, current.replaceAll('zumi-x', 'old-zumi'), 'utf-8');
+    }
+    const result = await runPreflight(defaultArgs());
+    const gate = result.gates.find((g) => g.name === 'knowledge_files_present_and_synced');
+    expect(gate?.status).toBe('warn');
+    expect(result.warned).toContain(gate);
+    expect(result.failed).toHaveLength(0);
+    expect(result.ok).toBe(true);
   });
 
   it('discord_bot_token 空 → fail', async () => {
