@@ -201,6 +201,7 @@ describe('submitPhaseAnswers — synthesize', () => {
       approvalStorePath: `${scaf.workDir}/approvals.jsonl`,
       judgmentEventsPath: `${scaf.workDir}/judgments.jsonl`,
       discordChannelMap: {},
+      gitSyncEnabled: true,
       collectorsEnabled: false,
       collectorIntervalMs: 30 * 60 * 1000,
     };
@@ -218,7 +219,9 @@ describe('submitPhaseAnswers — synthesize', () => {
     // escalation triggered by escalateOperator.
     const escalations = scaf.posts.filter((p) => p.kind === 'escalation');
     expect(escalations.length).toBeGreaterThanOrEqual(1);
-    expect(escalations.some((p) => p.content.includes('phase_questionnaire synthesize failed'))).toBe(true);
+    expect(
+      escalations.some((p) => p.content.includes('phase_questionnaire synthesize failed')),
+    ).toBe(true);
     expect(escalations.some((p) => p.content.includes('<@oper-1>'))).toBe(true);
     expect(escalations.some((p) => p.content.includes('resubmit'))).toBe(true);
   });

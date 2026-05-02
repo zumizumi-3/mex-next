@@ -20,15 +20,13 @@ import { IntegrationRepo } from '../../integration/_helpers.js';
 let workDir: string;
 let repo: AccountRepo;
 
-async function seedRepo(opts: {
-  skipDates?: string[];
-  postingSessions?: Record<string, unknown>;
-} = {}): Promise<void> {
-  await writeFile(
-    join(workDir, 'account.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
+async function seedRepo(
+  opts: {
+    skipDates?: string[];
+    postingSessions?: Record<string, unknown>;
+  } = {},
+): Promise<void> {
+  await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
   await writeFile(
     join(workDir, 'state.json'),
     JSON.stringify({
@@ -71,6 +69,7 @@ function makeConfig(): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: { customer_attention: 'ch-1', operator: 'ch-op' },
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
   };
@@ -91,19 +90,31 @@ function makeLogger(): Logger {
 function makePoster(): DiscordPosterImpl {
   return {
     postThread: vi.fn(async () => ({ threadId: 'th-1', messageId: 'm-1', delivered: true })),
-    postEscalation: vi.fn(async () => ({ threadId: 'th-esc', messageId: 'm-esc', delivered: true })),
+    postEscalation: vi.fn(async () => ({
+      threadId: 'th-esc',
+      messageId: 'm-esc',
+      delivered: true,
+    })),
     postMessage: vi.fn(async () => ({ messageId: 'm-2', channelId: 'ch-1' })),
   } as unknown as DiscordPosterImpl;
 }
 
 /** A bridge that returns a draft body for `post_v2_generate` and a passing judge for `post_v2_quality_judge`. */
-function makeBridge(draftText = '朝の30分で1日の体感が変わる。先に紙で整理してから手を動かすと早い。'): BridgeLlmProvider {
+function makeBridge(
+  draftText = '朝の30分で1日の体感が変わる。先に紙で整理してから手を動かすと早い。',
+): BridgeLlmProvider {
   return {
     call: vi.fn(async (opts) => {
       if (opts.kind === 'post_v2_quality_judge') {
         return {
           text: JSON.stringify({
-            scores: { stop_power: 4, specificity: 4, progression: 4, voice_match: 4, length_fit: 4 },
+            scores: {
+              stop_power: 4,
+              specificity: 4,
+              progression: 4,
+              voice_match: 4,
+              length_fit: 4,
+            },
           }),
           usage: { input: 0, output: 0 },
         };
@@ -135,7 +146,7 @@ describe('runDailyAutoPost', () => {
     const now = new Date('2026-05-02T03:00:00Z');
     await seedRepo({
       postingSessions: {
-        'psn_existing': {
+        psn_existing: {
           id: 'psn_existing',
           state: 'awaiting_decision',
           topic: 'old',

@@ -24,11 +24,7 @@ async function seedRepo(opts: {
   publishQueue?: PublishItem[];
   drafts?: Record<string, { text: string; topic?: string }>;
 }): Promise<void> {
-  await writeFile(
-    join(workDir, 'account.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
+  await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
   await writeFile(
     join(workDir, 'state.json'),
     JSON.stringify({
@@ -73,6 +69,7 @@ function makeConfig(): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: { operator: 'ch-op' },
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
   };
@@ -93,7 +90,11 @@ function makeLogger(): Logger {
 function makePoster(): DiscordPosterImpl {
   return {
     postThread: vi.fn(async () => ({ threadId: 'th', messageId: 'm', delivered: true })),
-    postEscalation: vi.fn(async () => ({ threadId: 'th-esc', messageId: 'm-esc', delivered: true })),
+    postEscalation: vi.fn(async () => ({
+      threadId: 'th-esc',
+      messageId: 'm-esc',
+      delivered: true,
+    })),
     postMessage: vi.fn(async () => ({ messageId: 'mm', channelId: 'cc' })),
   } as unknown as DiscordPosterImpl;
 }
@@ -139,7 +140,9 @@ describe('runScheduledPublish', () => {
       },
     });
 
-    const xApi = makeXApi(async (_text) => ({ id: `tw-${Math.random().toString(36).slice(2, 8)}` }));
+    const xApi = makeXApi(async (_text) => ({
+      id: `tw-${Math.random().toString(36).slice(2, 8)}`,
+    }));
 
     const outcome = await runScheduledPublish({
       config: makeConfig(),
@@ -196,7 +199,11 @@ describe('runScheduledPublish', () => {
     const now = new Date('2026-05-02T08:00:00Z');
     await seedRepo({
       publishQueue: [
-        buildItem({ publish_id: 'pub_x', content_id: 'missing', scheduled_at: '2026-05-02T07:00:00Z' }),
+        buildItem({
+          publish_id: 'pub_x',
+          content_id: 'missing',
+          scheduled_at: '2026-05-02T07:00:00Z',
+        }),
       ],
       // no drafts
     });
@@ -222,7 +229,11 @@ describe('runScheduledPublish', () => {
     const now = new Date('2026-05-04T08:00:00Z'); // 2 日経過
     await seedRepo({
       publishQueue: [
-        buildItem({ publish_id: 'pub_old', content_id: 'c1', scheduled_at: '2026-05-02T07:00:00Z' }),
+        buildItem({
+          publish_id: 'pub_old',
+          content_id: 'c1',
+          scheduled_at: '2026-05-02T07:00:00Z',
+        }),
       ],
       drafts: { c1: { text: 'body' } },
     });

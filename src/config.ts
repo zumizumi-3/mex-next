@@ -34,6 +34,7 @@ const ConfigSchema = z.object({
   approvalStorePath: z.string().min(1),
   judgmentEventsPath: z.string().min(1),
   discordChannelMap: z.record(z.string(), z.string()).default({}),
+  gitSyncEnabled: z.boolean().default(true),
   /**
    * Legacy: in-process collector loop. Now disabled by default — collectors
    * are driven by `mex-reactions-poll.timer` (see deploy/timers/). Kept on
@@ -44,7 +45,11 @@ const ConfigSchema = z.object({
    * Legacy: interval for the in-process loop (now superseded by cron).
    * Retained for env-file backward compatibility.
    */
-  collectorIntervalMs: z.number().int().positive().default(30 * 60 * 1000),
+  collectorIntervalMs: z
+    .number()
+    .int()
+    .positive()
+    .default(30 * 60 * 1000),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
@@ -93,19 +98,28 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     operatorDiscordUserIds: operatorIds,
     githubToken: env.GITHUB_TOKEN,
     logLevel: env.LOG_LEVEL,
-    pendingTurnStorePath: pathFor(env, 'PENDING_TURN_STORE_PATH', () =>
-      `${runtimeDir}/pending-${accountId || 'default'}.json`,
+    pendingTurnStorePath: pathFor(
+      env,
+      'PENDING_TURN_STORE_PATH',
+      () => `${runtimeDir}/pending-${accountId || 'default'}.json`,
     ),
-    sessionStorePath: pathFor(env, 'SESSION_STORE_PATH', () =>
-      `${runtimeDir}/sessions-${accountId || 'default'}.json`,
+    sessionStorePath: pathFor(
+      env,
+      'SESSION_STORE_PATH',
+      () => `${runtimeDir}/sessions-${accountId || 'default'}.json`,
     ),
-    approvalStorePath: pathFor(env, 'APPROVAL_STORE_PATH', () =>
-      `${runtimeDir}/approvals-${accountId || 'default'}.jsonl`,
+    approvalStorePath: pathFor(
+      env,
+      'APPROVAL_STORE_PATH',
+      () => `${runtimeDir}/approvals-${accountId || 'default'}.jsonl`,
     ),
-    judgmentEventsPath: pathFor(env, 'JUDGMENT_EVENTS_PATH', () =>
-      `${runtimeDir}/judgment-events-${accountId || 'default'}.jsonl`,
+    judgmentEventsPath: pathFor(
+      env,
+      'JUDGMENT_EVENTS_PATH',
+      () => `${runtimeDir}/judgment-events-${accountId || 'default'}.jsonl`,
     ),
     discordChannelMap: parseChannelMap(env),
+    gitSyncEnabled: parseBool(env.MEX_GIT_SYNC_ENABLED, true),
     collectorsEnabled: parseBool(env.COLLECTORS_ENABLED, false),
     collectorIntervalMs,
   });

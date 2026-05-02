@@ -32,16 +32,8 @@ beforeEach(async () => {
   registryDir = await mkdtemp(join(tmpdir(), 'mex-next-registry-'));
   registryPath = join(registryDir, 'accounts-registry.json');
 
-  await writeFile(
-    join(workDir, 'account.json'),
-    JSON.stringify(validAccountJson),
-    'utf-8',
-  );
-  await writeFile(
-    join(workDir, 'state.json'),
-    JSON.stringify(validStateJson),
-    'utf-8',
-  );
+  await writeFile(join(workDir, 'account.json'), JSON.stringify(validAccountJson), 'utf-8');
+  await writeFile(join(workDir, 'state.json'), JSON.stringify(validStateJson), 'utf-8');
   // git repo にする (account_repo 直下を git で init 済みに見せる)
   await mkdir(join(workDir, '.git'), { recursive: true });
   await writeFile(
@@ -81,13 +73,16 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: {},
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
     ...overrides,
   };
 }
 
-function makeRunner(plan: Record<string, { exitCode: number; stdout?: string; stderr?: string }>): CommandRunner {
+function makeRunner(
+  plan: Record<string, { exitCode: number; stdout?: string; stderr?: string }>,
+): CommandRunner {
   return async (file, args) => {
     const key = `${file} ${args.join(' ')}`;
     const matched = Object.entries(plan).find(([prefix]) => key.startsWith(prefix));
@@ -264,11 +259,7 @@ describe('runPreflight', () => {
   });
 
   it('accounts-registry に entry が無い → fail', async () => {
-    await writeFile(
-      registryPath,
-      JSON.stringify({ accounts: [] }),
-      'utf-8',
-    );
+    await writeFile(registryPath, JSON.stringify({ accounts: [] }), 'utf-8');
     const result = await runPreflight(defaultArgs());
     const gate = result.gates.find((g) => g.name === 'accounts_registry_binding');
     expect(gate?.status).toBe('fail');

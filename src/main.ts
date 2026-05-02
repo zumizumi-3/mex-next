@@ -30,6 +30,8 @@ import { PendingTurnStore } from './conversation/pending-turn-store.js';
 import { SessionStore } from './conversation/session-store.js';
 import { IntentDrivenRunner } from './conversation/runner.js';
 import { AccountRepo } from './account-state/repo.js';
+import { GitSync } from './account-state/git-sync.js';
+import { escalateOperator } from './automation/operator-escalation.js';
 import {
   createBridge,
   createAnthropicSdkProvider,
@@ -139,7 +141,11 @@ async function main(): Promise<void> {
    * a single contract while the bridge stays canonical.
    */
   const adaptBridgeForCollectors = (bridge: LlmProvider): LlmProviderLike => ({
-    async request<T>(input: { kind: string; input: Record<string, unknown>; timeoutMs?: number }): Promise<{ data: T; raw?: string }> {
+    async request<T>(input: {
+      kind: string;
+      input: Record<string, unknown>;
+      timeoutMs?: number;
+    }): Promise<{ data: T; raw?: string }> {
       const response = await bridge.call({
         kind: input.kind as never,
         userPrompt: JSON.stringify(input.input),
@@ -154,12 +160,36 @@ async function main(): Promise<void> {
     },
   });
 
-  const repo = new AccountRepo(config.accountRepo);
   const client = createDiscordClient({ logger: log });
   const poster = new DiscordPosterImpl(client, {
     channelMap: config.discordChannelMap,
     logger: log,
   });
+  let repo: AccountRepo;
+  const gitSync = new GitSync({
+    accountRepoPath: config.accountRepo,
+    logger: log.child({ subsystem: 'git-sync' }),
+    enabled: config.gitSyncEnabled,
+    failureCallback: async (reason) => {
+      await escalateOperator({
+        reason: 'git_sync persistent failure',
+        detail: reason,
+        hint: `check ${config.accountRepo} git remote auth`,
+        accountId: config.accountId,
+        poster,
+        config,
+        repo,
+      });
+    },
+  });
+  repo = new AccountRepo(config.accountRepo, { gitSync, logger: log });
+  void gitSync
+    .healthCheck()
+    .then((result) =>
+      result.ok
+        ? log.info('git_sync_ready')
+        : log.warn({ reason: result.reason }, 'git_sync_unavailable'),
+    );
   const bridge = buildLlmBridge(config, log, poster);
   const xApi = buildXApiClient(config, log, poster);
 

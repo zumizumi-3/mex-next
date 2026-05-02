@@ -17,19 +17,12 @@
 
 import { join, resolve } from 'node:path';
 import { promises as fs } from 'node:fs';
-import {
-  readJson,
-  readJsonRaw,
-  writeJsonAtomic,
-  withStateLock,
-} from './io.js';
+import { readJson, readJsonRaw, writeJsonAtomic, withStateLock } from './io.js';
 import { AccountJsonSchema, type AccountJson } from './account-schema.js';
 import { StateJsonSchema, type StateJson } from './state-schema.js';
-import {
-  migrateAccount,
-  migrateState,
-  type MigrationResult,
-} from './schema-migration.js';
+import { migrateAccount, migrateState, type MigrationResult } from './schema-migration.js';
+import type { GitSync } from './git-sync.js';
+import type { Logger } from 'pino';
 
 /**
  * Identifier whitelist. Allowed: ASCII letters, digits, underscore, hyphen.
@@ -70,12 +63,7 @@ export function assertSafeId(value: unknown, kind = 'content_id'): string {
   if (value.length > MAX_ID_LENGTH) {
     throw new InvalidContentIdError(value, `${kind} exceeds ${MAX_ID_LENGTH} chars`);
   }
-  if (
-    value.includes('..') ||
-    value.includes('/') ||
-    value.includes('\\') ||
-    value.includes('\0')
-  ) {
+  if (value.includes('..') || value.includes('/') || value.includes('\\') || value.includes('\0')) {
     throw new InvalidContentIdError(value, `${kind} contains forbidden characters`);
   }
   if (!SAFE_ID_PATTERN.test(value)) {
@@ -95,10 +83,7 @@ function assertWithin(parent: string, candidate: string): string {
   const candidateResolved = resolve(candidate);
   // parentResolved + sep, but use startsWith with separator-aware match.
   const sep = parentResolved.endsWith('/') ? '' : '/';
-  if (
-    candidateResolved !== parentResolved &&
-    !candidateResolved.startsWith(parentResolved + sep)
-  ) {
+  if (candidateResolved !== parentResolved && !candidateResolved.startsWith(parentResolved + sep)) {
     throw new InvalidContentIdError(
       candidate,
       `path escapes account_repo (${candidateResolved} not under ${parentResolved})`,
@@ -113,7 +98,16 @@ export interface WithStateResult<T> {
 }
 
 export class AccountRepo {
-  constructor(private readonly path: string) {}
+  private readonly gitSync?: GitSync;
+  private readonly logger?: Logger;
+
+  constructor(
+    private readonly path: string,
+    opts: { gitSync?: GitSync; logger?: Logger } = {},
+  ) {
+    this.gitSync = opts.gitSync;
+    this.logger = opts.logger;
+  }
 
   /** account-state/types.ts の `AccountRepo` interface 互換 (posting/settings module で参照される). */
   get accountRepoPath(): string {
@@ -201,12 +195,14 @@ export class AccountRepo {
    * (= 元の state.json はそのまま)。
    */
   async withState<T>(
-    fn: (state: StateJson) => Promise<{ state: StateJson; result: T }>
+    fn: (state: StateJson) => Promise<{ state: StateJson; result: T }>,
+    summaryHint?: string | ((state: StateJson) => string),
   ): Promise<T> {
     return withStateLock(this.path, async () => {
       const { value: state } = await this.readStateWithMigration();
       const { state: nextState, result } = await fn(state);
       await this.writeState(nextState);
+      this.syncMutation(this.stateMutationMessage(nextState, summaryHint));
       return result;
     });
   }
@@ -216,7 +212,7 @@ export class AccountRepo {
    * `withStateLock` 名で interface を持っているので、それを満たす。
    */
   async withStateLock<T>(
-    fn: (state: StateJson) => Promise<{ state: StateJson; result: T }>
+    fn: (state: StateJson) => Promise<{ state: StateJson; result: T }>,
   ): Promise<T> {
     return this.withState(fn);
   }
@@ -236,11 +232,13 @@ export class AccountRepo {
   /** Compat alias for writers using `saveAccount`. */
   async saveAccount(account: AccountJson): Promise<void> {
     await this.writeAccount(account);
+    this.syncMutation('chore(account): updated');
   }
 
   /** Compat alias for writers using `saveState`. */
   async saveState(state: StateJson): Promise<void> {
     await this.writeState(state);
+    this.syncMutation('chore(state): mutation');
   }
 
   /**
@@ -261,9 +259,7 @@ export class AccountRepo {
    * content/<id>/{content,draft}.json を読む。
    * 存在しなければ undefined を返す (migration 用 callers が判定)。
    */
-  async readContent(
-    contentId: string
-  ): Promise<{ content: unknown; draft: unknown }> {
+  async readContent(contentId: string): Promise<{ content: unknown; draft: unknown }> {
     const dir = this.contentDir(contentId);
     const contentPath = join(dir, 'content.json');
     const draftPath = join(dir, 'draft.json');
@@ -278,17 +274,35 @@ export class AccountRepo {
    * content/<id>/{content,draft}.json を atomic に書く。
    * 親 directory も再帰的に作る。
    */
-  async writeContent(
-    contentId: string,
-    content: unknown,
-    draft: unknown
-  ): Promise<void> {
+  async writeContent(contentId: string, content: unknown, draft: unknown): Promise<void> {
     const dir = this.contentDir(contentId);
     await fs.mkdir(dir, { recursive: true });
     await Promise.all([
       writeJsonAtomic(join(dir, 'content.json'), content),
       writeJsonAtomic(join(dir, 'draft.json'), draft),
     ]);
+    this.syncMutation(`chore(content): ${contentId}`);
+  }
+
+  private stateMutationMessage(
+    state: StateJson,
+    summaryHint?: string | ((state: StateJson) => string),
+  ): string {
+    if (!summaryHint) return 'chore(state): mutation';
+    const hint = typeof summaryHint === 'function' ? summaryHint(state) : summaryHint;
+    const trimmed = hint.trim();
+    if (trimmed.length === 0) return 'chore(state): mutation';
+    return `chore(state): mutation (${trimmed})`;
+  }
+
+  private syncMutation(message: string): void {
+    if (!this.gitSync) return;
+    void this.gitSync.syncMutation(message).catch((err: unknown) => {
+      this.logger?.warn(
+        { err: err instanceof Error ? err.message : String(err), message },
+        'account_repo_git_sync_unhandled_error',
+      );
+    });
   }
 }
 

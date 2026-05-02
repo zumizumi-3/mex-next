@@ -8,10 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from 'pino';
 import type { AccountRepo } from '../../../src/account-state/repo.js';
-import {
-  parseHorizon,
-  runPeriodicRetro,
-} from '../../../src/scripts/cron-periodic-retro.js';
+import { parseHorizon, runPeriodicRetro } from '../../../src/scripts/cron-periodic-retro.js';
 import type { AppConfig } from '../../../src/config.js';
 import type { LlmProvider as BridgeLlmProvider } from '../../../src/llm/index.js';
 import type { DiscordPosterImpl } from '../../../src/discord/poster.js';
@@ -20,15 +17,13 @@ import { IntegrationRepo } from '../../integration/_helpers.js';
 let workDir: string;
 let repo: AccountRepo;
 
-async function seedRepo(opts: {
-  retroSessions?: Record<string, unknown>;
-  postedContents?: unknown[];
-} = {}): Promise<void> {
-  await writeFile(
-    join(workDir, 'account.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
+async function seedRepo(
+  opts: {
+    retroSessions?: Record<string, unknown>;
+    postedContents?: unknown[];
+  } = {},
+): Promise<void> {
+  await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
   await writeFile(
     join(workDir, 'state.json'),
     JSON.stringify({
@@ -67,6 +62,7 @@ function makeConfig(): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: { customer_passive: 'ch-pas', operator: 'ch-op' },
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
   };
@@ -87,12 +83,18 @@ function makeLogger(): Logger {
 function makePoster(): DiscordPosterImpl {
   return {
     postThread: vi.fn(async () => ({ threadId: 'th', messageId: 'm', delivered: true })),
-    postEscalation: vi.fn(async () => ({ threadId: 'th-esc', messageId: 'm-esc', delivered: true })),
+    postEscalation: vi.fn(async () => ({
+      threadId: 'th-esc',
+      messageId: 'm-esc',
+      delivered: true,
+    })),
     postMessage: vi.fn(async () => ({ messageId: 'mm', channelId: 'cc' })),
   } as unknown as DiscordPosterImpl;
 }
 
-function makeBridge(draftText = '今週は朝の30分整理が効いた。来週は午後の集中時間を1コマ増やす。'): BridgeLlmProvider {
+function makeBridge(
+  draftText = '今週は朝の30分整理が効いた。来週は午後の集中時間を1コマ増やす。',
+): BridgeLlmProvider {
   return {
     call: vi.fn(async () => ({ text: draftText, usage: { input: 0, output: 0 } })),
   };
@@ -182,7 +184,9 @@ describe('runPeriodicRetro', () => {
     // After migration, sessions are array-shaped. Locate by id.
     let foundState: string | undefined;
     if (Array.isArray(raw)) {
-      const found = raw.find((s) => s && typeof s === 'object' && (s as { id?: string }).id === oldSessionId);
+      const found = raw.find(
+        (s) => s && typeof s === 'object' && (s as { id?: string }).id === oldSessionId,
+      );
       foundState = found ? (found as { state?: string }).state : undefined;
     } else if (raw && typeof raw === 'object') {
       const dict = raw as Record<string, { state?: string }>;

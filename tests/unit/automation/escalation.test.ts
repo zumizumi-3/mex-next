@@ -7,10 +7,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccountRepo } from '../../../src/account-state/repo.js';
-import {
-  shouldEscalate,
-  recordEscalation,
-} from '../../../src/automation/escalation-state.js';
+import { shouldEscalate, recordEscalation } from '../../../src/automation/escalation-state.js';
 import { escalateOperator } from '../../../src/automation/operator-escalation.js';
 import type { AppConfig } from '../../../src/config.js';
 import type { DiscordPoster } from '../../../src/posting/collectors/types.js';
@@ -20,16 +17,8 @@ let repo: AccountRepo;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'mex-next-escalation-'));
-  await writeFile(
-    join(workDir, 'account.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
-  await writeFile(
-    join(workDir, 'state.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
+  await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+  await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
   repo = new AccountRepo(workDir);
 });
 
@@ -55,6 +44,7 @@ function makeConfig(): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: {},
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
   };

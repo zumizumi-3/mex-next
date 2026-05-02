@@ -34,11 +34,7 @@ async function seedRepo(account?: Record<string, unknown>): Promise<void> {
     }),
     'utf-8',
   );
-  await writeFile(
-    join(workDir, 'state.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
+  await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
 }
 
 beforeEach(async () => {
@@ -68,6 +64,7 @@ function makeConfig(): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: {},
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
   };
@@ -88,7 +85,11 @@ function makeLogger(): Logger {
 function makePoster(): DiscordPosterImpl {
   return {
     postThread: vi.fn(async () => ({ threadId: 'th', messageId: 'm', delivered: true })),
-    postEscalation: vi.fn(async () => ({ threadId: 'th-esc', messageId: 'm-esc', delivered: true })),
+    postEscalation: vi.fn(async () => ({
+      threadId: 'th-esc',
+      messageId: 'm-esc',
+      delivered: true,
+    })),
     postMessage: vi.fn(async () => ({ messageId: 'mm', channelId: 'cc' })),
   } as unknown as DiscordPosterImpl;
 }
@@ -243,11 +244,7 @@ describe('runReactionsPoll', () => {
       }),
       'utf-8',
     );
-    await writeFile(
-      join(workDir, 'state.json'),
-      JSON.stringify({ account_id: '' }),
-      'utf-8',
-    );
+    await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: '' }), 'utf-8');
     const xApi = makeXApi();
 
     const outcome = await runReactionsPoll({

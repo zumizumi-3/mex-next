@@ -20,16 +20,8 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'mex-next-prefgate-'));
   registryDir = await mkdtemp(join(tmpdir(), 'mex-next-prefgate-reg-'));
   registryPath = join(registryDir, 'accounts-registry.json');
-  await writeFile(
-    join(workDir, 'account.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
-  await writeFile(
-    join(workDir, 'state.json'),
-    JSON.stringify({ account_id: 'zumi-x' }),
-    'utf-8',
-  );
+  await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+  await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
   await mkdir(join(workDir, '.git'), { recursive: true });
   await writeFile(
     registryPath,
@@ -68,6 +60,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     approvalStorePath: `${workDir}/approvals.jsonl`,
     judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: {},
+    gitSyncEnabled: true,
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
     ...overrides,
