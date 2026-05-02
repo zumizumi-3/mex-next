@@ -53,6 +53,7 @@ export type IntentName =
   | 'training.run'
   | 'phase.questionnaire_start'
   | 'phase.questionnaire_status'
+  | 'system.update'
   | 'unknown';
 
 export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
@@ -79,6 +80,7 @@ export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'training.run',
   'phase.questionnaire_start',
   'phase.questionnaire_status',
+  'system.update',
   'unknown',
 ]);
 
@@ -97,6 +99,7 @@ export const DESTRUCTIVE_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>(
   'cadence.set_standard',
   'cadence.set_aggressive',
   'onboard.cancel',
+  'system.update',
 ]);
 
 /**

@@ -318,6 +318,11 @@ const MEX_COMMAND: ApplicationCommandData = {
       name: 'go',
       description: '今すぐ自動運用を一周回す',
     },
+    {
+      type: ApplicationCommandOptionType.Subcommand,
+      name: 'update',
+      description: 'mex-bot を最新版に自己更新する (operator 専用)',
+    },
   ],
 };
 
@@ -361,6 +366,7 @@ export function commandToIntent(
     if (subcommand === 'status') return 'status.show';
     if (subcommand === 'help') return 'help.show';
     if (subcommand === 'go') return 'status.show'; // /mex go acts like a quick status pulse
+    if (subcommand === 'update') return 'system.update';
     return 'unknown';
   }
   if (group === 'schedule') {

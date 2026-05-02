@@ -34,6 +34,7 @@ import {
   handlePhaseQuestionnaireStatus,
   handlePhaseQuestionnaireSubmit,
 } from './phase.js';
+import { handleSystemUpdate } from './system.js';
 import type { Handler, HandlersMap } from './types.js';
 
 export type { HandlerContext, HandlerResult, HandlerArgs, Handler, HandlersMap } from './types.js';
@@ -93,6 +94,7 @@ export function buildHandlers(): HandlersMap {
     'phase.questionnaire_start': handlePhaseQuestionnaireStart,
     'phase.questionnaire_status': handlePhaseQuestionnaireStatus,
     'phase.questionnaire_submit': handlePhaseQuestionnaireSubmit,
+    'system.update': handleSystemUpdate,
     unknown: handleUnknown,
   };
   return map;

@@ -43,6 +43,7 @@ export const SUPPORTED_INTENT_NAMES: readonly string[] = [
   'training.run',
   'phase.questionnaire_start',
   'phase.questionnaire_status',
+  'system.update',
   'unknown',
 ] as const;
 
@@ -204,6 +205,33 @@ export const INTENT_FEW_SHOTS: readonly IntentExample[] = [
       args: {},
       confirmation_needed: true,
       confirmation_message: '進行中のオンボーディングを中断しますか？',
+    },
+  },
+  {
+    user: 'アップデートして',
+    result: {
+      intent: 'system.update',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: 'mex-bot を最新版に更新しますか? (再起動を伴います)',
+    },
+  },
+  {
+    user: '更新して',
+    result: {
+      intent: 'system.update',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: 'mex-bot を最新版に更新しますか? (再起動を伴います)',
+    },
+  },
+  {
+    user: '最新化',
+    result: {
+      intent: 'system.update',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: 'mex-bot を最新版に更新しますか? (再起動を伴います)',
     },
   },
 ];
