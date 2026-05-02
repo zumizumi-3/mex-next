@@ -18,6 +18,7 @@
 #   9. Smoke test
 #  10. Enable + start mex-bot + timers
 #  11. Print rollback hint
+#  12. Regenerate knowledge markdown files from account.json
 #
 # Usage (root):
 #   bash /opt/mex-next/scripts/migrate-from-python.sh <account-id>
@@ -56,6 +57,7 @@ DOPPLER_CONFIG="prd"
 RUNTIME_DIR="/var/lib/mex-next"
 REGISTRY_PATH="${RUNTIME_DIR}/accounts-registry.json"
 ENV_FILE="/etc/mex/${ACCOUNT_ID}.env"
+KNOWLEDGE_REGENERATED="no"
 
 # ============================================================================
 # [1/11] 事前確認
@@ -423,6 +425,22 @@ step_start() {
 }
 
 # ============================================================================
+# [12/12] knowledge files regenerate
+# ============================================================================
+step_regenerate_knowledge() {
+    log "[12/12] Knowledge files: regenerate AGENTS.md / CLAUDE.md / persona.md / brand.md / etc. from current account.json"
+    prompt_default "regenerate knowledge files now? (Y/n)" "Y" REGEN_KNOWLEDGE
+    if [[ ! "$REGEN_KNOWLEDGE" =~ ^[Yy]$|^[Yy][Ee][Ss]$ ]]; then
+        warn "knowledge regenerate skip"
+        return 0
+    fi
+
+    node "$MEX_NEXT_DIR/dist/scripts/regenerate-knowledge.js" --account-repo "$ACCOUNT_REPO"
+    KNOWLEDGE_REGENERATED="yes"
+    ok "Knowledge files written. Next bot start will git push them automatically."
+}
+
+# ============================================================================
 # 完了サマリ
 # ============================================================================
 step_finish() {
@@ -434,6 +452,7 @@ step_finish() {
   mex_next     : ${MEX_NEXT_DIR}
   registry     : ${REGISTRY_PATH}
   env file     : ${ENV_FILE}
+  knowledge    : ${KNOWLEDGE_REGENERATED}
 
   確認:
     systemctl status mex-bot.service
@@ -470,6 +489,7 @@ main() {
     step_desired
     step_smoke
     step_start
+    step_regenerate_knowledge
     step_finish
 }
 

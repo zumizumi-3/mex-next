@@ -59,6 +59,10 @@ describe('launchAccount', () => {
     const registryRaw = await readFile(result.registryPath, 'utf-8');
     const registry = JSON.parse(registryRaw) as { accounts: Array<{ account_id: string }> };
     expect(registry.accounts.some((e) => e.account_id === 'zumi-x')).toBe(true);
+
+    const agentsRaw = await readFile(join(accountDir, 'AGENTS.md'), 'utf-8');
+    expect(agentsRaw).toContain('# AGENTS.md — zumi-x');
+    expect(await readFile(join(accountDir, 'CLAUDE.md'), 'utf-8')).toBe(agentsRaw);
   });
 
   it('is idempotent — re-running keeps account.json + reports unchanged registry', async () => {

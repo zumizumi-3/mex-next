@@ -24,6 +24,7 @@ import type { Logger } from 'pino';
 import { AccountJsonSchema, type AccountJson } from '../account-state/account-schema.js';
 import { StateJsonSchema, type StateJson } from '../account-state/state-schema.js';
 import { writeJsonAtomic } from '../account-state/io.js';
+import { regenerateKnowledgeFiles } from '../account-state/knowledge-writer.js';
 
 export interface LaunchWizardOptions {
   /** Account id (kebab-case, e.g. "zumi-x"). Required. */
@@ -258,6 +259,11 @@ export async function launchAccount(
     dir: targetDir,
     nowIso,
   });
+  const knowledgeFiles = await regenerateKnowledgeFiles(targetDir, accountJson);
+  opts.logger?.info?.(
+    { accountId, count: knowledgeFiles.length },
+    'launch_wizard_knowledge_files_written',
+  );
 
   return {
     accountDir: targetDir,

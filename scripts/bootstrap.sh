@@ -127,9 +127,21 @@ step_account_repo() {
             ;;
         2)
             prompt "新 repo (owner/name 例: zumizumi-3/${ACCOUNT_ID}-x-ops):" NEW_REPO
-            gh repo create "${NEW_REPO}" --private --clone --add-readme
-            local repo_name="${NEW_REPO##*/}"
-            mv "${repo_name}" "${ACCOUNT_REPO}"
+            prompt "Create the account repo on GitHub now (Y/n)?" CREATE_REPO_NOW
+            CREATE_REPO_NOW="${CREATE_REPO_NOW:-Y}"
+            if [[ "${CREATE_REPO_NOW}" =~ ^[Yy]$|^[Yy][Ee][Ss]$ ]]; then
+                local create_output_file
+                local create_output
+                create_output_file="$(mktemp)"
+                "${MEX_NEXT_DIR}/scripts/create-account-repo.sh" "${NEW_REPO}" "${ACCOUNT_REPO}" | tee "${create_output_file}"
+                create_output="$(cat "${create_output_file}")"
+                rm -f "${create_output_file}"
+                [ -n "${create_output}" ] || warn "create-account-repo output was empty"
+                export ACCOUNT_REPO
+            else
+                prompt "repo URL or owner/name (already created):" EXISTING_REPO
+                gh repo clone "${EXISTING_REPO}" "${ACCOUNT_REPO}"
+            fi
             ;;
         *)
             fail "1 or 2 を選択してください"

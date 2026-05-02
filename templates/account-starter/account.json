@@ -1,0 +1,10 @@
+{
+  "account_id": "TBD",
+  "display_name": "TBD",
+  "x_handle": "TBD",
+  "persona": {},
+  "brand": {},
+  "operating_cadence": { "profile": "light", "hot_zones": [] },
+  "x_action_system": { "tracked_targets": { "usernames": [] } },
+  "approval_policy": {}
+}
