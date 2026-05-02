@@ -166,11 +166,17 @@ step_topup_doppler() {
     ok "DISCORD_BOT_TOKEN 確認済"
 
     if [ -z "$has_anthropic" ]; then
-        echo "  ANTHROPIC_API_KEY が Doppler に未登録です (LLM bridge 必須)"
-        prompt "Anthropic API key (sk-ant-...):" ANTHROPIC_KEY
-        doppler secrets set "ANTHROPIC_API_KEY=${ANTHROPIC_KEY}" \
-            --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --silent
-        ok "ANTHROPIC_API_KEY 投入"
+        echo "  ANTHROPIC_API_KEY が未登録 (任意)"
+        echo "  入れると intent classify が SDK 直接呼出で 1-2 秒速い。"
+        echo "  空 Enter で skip (全 kind を Claude Code CLI 経由にする)。"
+        prompt "Anthropic API key (sk-ant-... / 空 Enter で skip):" ANTHROPIC_KEY
+        if [ -n "$ANTHROPIC_KEY" ]; then
+            doppler secrets set "ANTHROPIC_API_KEY=${ANTHROPIC_KEY}" \
+                --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG" --silent
+            ok "ANTHROPIC_API_KEY 投入"
+        else
+            ok "ANTHROPIC_API_KEY skip → Claude Code CLI モード"
+        fi
     else
         ok "ANTHROPIC_API_KEY 既存"
     fi

@@ -74,7 +74,12 @@ export interface LlmProvider {
 }
 
 export interface LlmBridgeConfig {
-  anthropic: LlmProvider;
+  /**
+   * Anthropic SDK provider. Optional — when omitted, kinds that would have
+   * routed to anthropic fall back to claudeCode. Useful for deployments
+   * without an Anthropic API key (Claude Code subscription only).
+   */
+  anthropic?: LlmProvider;
   claudeCode: LlmProvider;
   /** Optional: override KIND_PROVIDER for tests / experimental routing. */
   providerOverrides?: Partial<Record<LlmKind, LlmProviderName>>;
@@ -164,8 +169,11 @@ export function createBridge(config: LlmBridgeConfig): LlmProvider {
     async call(opts: LlmCallOptions): Promise<LlmResponse> {
       const overridden = config.providerOverrides?.[opts.kind];
       const providerName = overridden ?? KIND_PROVIDER[opts.kind];
+      // Fallback: if anthropic is requested but not configured, route to claudeCode.
       const provider =
-        providerName === 'anthropic' ? config.anthropic : config.claudeCode;
+        providerName === 'anthropic' && config.anthropic
+          ? config.anthropic
+          : config.claudeCode;
       const filled = fillDefaults(opts);
 
       const invoke = (): Promise<LlmResponse> => provider.call(filled);

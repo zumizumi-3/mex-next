@@ -47,15 +47,23 @@ function buildLlmBridge(
   log: ReturnType<typeof createLogger>,
   discordPoster: DiscordPosterImpl,
 ): LlmProvider {
-  const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
-  const anthropic = createAnthropicSdkProvider({
-    messages: {
-      create: (params) => anthropicClient.messages.create(params) as never,
-    },
-  });
   const claudeCode = createClaudeCodeProvider({});
+  // Anthropic SDK is opt-in: when ANTHROPIC_API_KEY is missing, every kind
+  // falls back to claude_code (slightly slower but no separate billing).
+  let anthropic: LlmProvider | undefined;
+  if (config.anthropicApiKey && config.anthropicApiKey.length > 0) {
+    const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
+    anthropic = createAnthropicSdkProvider({
+      messages: {
+        create: (params) => anthropicClient.messages.create(params) as never,
+      },
+    });
+    log.info('llm_bridge_anthropic_enabled');
+  } else {
+    log.info('llm_bridge_claude_code_only');
+  }
   return createBridge({
-    anthropic,
+    ...(anthropic ? { anthropic } : {}),
     claudeCode,
     resilience: {
       attempts: 3,

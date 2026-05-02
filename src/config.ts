@@ -17,7 +17,11 @@ const ConfigSchema = z.object({
   accountId: z.string().min(1, 'ACCOUNT_ID is required'),
   accountRepo: z.string().min(1, 'ACCOUNT_REPO is required'),
   discordBotToken: z.string().min(1, 'DISCORD_BOT_TOKEN is required'),
-  anthropicApiKey: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
+  /**
+   * Anthropic SDK API key. Optional — when omitted, all kinds route through
+   * the Claude Code CLI subprocess (slower per call but no separate billing).
+   */
+  anthropicApiKey: z.string().optional(),
   xApiConsumerKey: z.string().optional(),
   xApiConsumerSecret: z.string().optional(),
   xApiAccessToken: z.string().optional(),
