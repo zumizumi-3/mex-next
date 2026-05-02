@@ -185,6 +185,35 @@ describe('PostingStateMachine — quality fail routes to repairing', () => {
   });
 });
 
+describe('PostingStateMachine — repair retry cap', () => {
+  it('forces failed_terminal after REPAIR_MAX_ATTEMPTS=2 repairing rounds', async () => {
+    const repo = makeFakeRepo({ account: ACCOUNT, state: { posting_sessions: {}, publish_queue: [] } });
+    // Always-fail judge (judgePass=false) + non-empty body so validate
+    // passes and the failure is purely on the quality axis.
+    const bridge = makeBridge('朝の30分で1日の体感が変わる。先に紙で整理してから手を動かすと早い。', false);
+    const sm = new PostingStateMachine({ repo, bridge });
+
+    const s = await sm.createSession('cap_test');
+    await sm.indexContext(s.id);
+    await sm.generateCandidate(s.id);
+    let validated = await sm.validateCurrent(s.id);
+    expect(validated.state).toBe('repairing');
+    expect(validated.candidates[0].repairAttemptCount).toBeUndefined();
+
+    // First repair: generate from `repairing` → attempt count 1.
+    const firstRepair = await sm.generateCandidate(s.id);
+    expect(firstRepair.state).toBe('validating');
+    expect(firstRepair.candidates[1]?.repairAttemptCount).toBe(1);
+    validated = await sm.validateCurrent(s.id);
+    expect(validated.state).toBe('repairing');
+
+    // Second repair: attempt count 2 → cap reached → failed_terminal.
+    const result = await sm.generateCandidate(s.id);
+    expect(result.state).toBe('failed_terminal');
+    expect(result.lastError?.code).toBe('repair_max_attempts_exceeded');
+  });
+});
+
 describe('PostingStateMachine — expireStaleSessions', () => {
   it('expires sessions older than TTL', async () => {
     const repo = makeFakeRepo({ account: ACCOUNT, state: { posting_sessions: {}, publish_queue: [] } });

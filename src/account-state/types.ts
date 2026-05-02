@@ -220,7 +220,14 @@ export interface AccountRepo {
   loadAccount(): Promise<AccountJson>;
   saveAccount(account: AccountJson): Promise<void>;
   loadState(): Promise<StateJson>;
+  /**
+   * Write state.json. `saveState` is the canonical name; `writeState` is
+   * the alias used by collectors that share the lighter
+   * `AccountRepoLike` contract — both must point to the same atomic
+   * write operation.
+   */
   saveState(state: StateJson): Promise<void>;
+  writeState(state: StateJson): Promise<void>;
   /**
    * Read draft.json text for a given content_id, or null if missing.
    */

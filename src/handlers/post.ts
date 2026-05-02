@@ -13,6 +13,7 @@ import type { HandlerContext, HandlerResult, HandlerArgs } from './types.js';
 import { PostingStateMachine } from '../posting/state-machine.js';
 import { asPostingMachineRepo } from './repo-adapter.js';
 import type { LlmProvider as PostingLlmProvider } from '../posting/types.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 export async function handlePostCreate(
   ctx: HandlerContext,
@@ -47,14 +48,17 @@ export async function handlePostCreate(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      content: `❌ 投稿生成に失敗しました: ${message}`,
+      content: `${STATE_EMOJI.error} 投稿生成に失敗しました: ${message}`,
       tag: 'post.create.fail',
     };
   }
 
   const candidate = session.candidates[session.currentCandidateIndex];
   if (!candidate) {
-    return { content: '⚠️ 候補が生成されませんでした。', tag: 'post.create.no_candidate' };
+    return {
+      content: `${STATE_EMOJI.attention} 候補が生成されませんでした。`,
+      tag: 'post.create.no_candidate',
+    };
   }
 
   if (session.state === 'awaiting_decision') {
@@ -72,7 +76,12 @@ export async function handlePostCreate(
     const errs = candidate.validateResult?.errors ?? [];
     const codeLines = errs.map((e) => `- ${e.code}: ${e.message}`);
     return {
-      content: ['⚠️ 自動チェックで引っかかりました:', ...codeLines, '', '別の切り口で書き直してください。'].join('\n'),
+      content: [
+        `${STATE_EMOJI.attention} 自動チェックで引っかかりました:`,
+        ...codeLines,
+        '',
+        '別の切り口で書き直してください。',
+      ].join('\n'),
       tag: 'post.create.repairing',
     };
   }

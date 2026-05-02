@@ -145,6 +145,56 @@ describe('computeNextSlot', () => {
     expect(Math.abs(slot.getTime() - natural.getTime())).toBeGreaterThanOrEqual(30 * 60_000);
   });
 
+  it('rolls month boundary correctly: 2026-04-30 +1 day → 2026-05-01 (JST)', () => {
+    // now = 2026-04-30 22:00 JST = 2026-04-30 13:00 UTC. light hot zone
+    // start = 06:00 JST. publishIndex=1 → "tomorrow JST 06:18". Tomorrow
+    // JST is 2026-05-01, so the slot must land on 2026-04-30T21:18Z
+    // (= 2026-05-01 06:18 JST). A naive `setDate(date+1)` on a UTC view
+    // would wrongly produce 2026-04-31 → corrupt date.
+    const now = new Date('2026-04-30T13:00:00Z'); // 2026-04-30 22:00 JST
+    const slot = computeNextSlot({
+      cadence,
+      publishIndex: 1,
+      existingTimes: [],
+      now,
+    });
+    // 2026-05-01 06:25 JST (offset for idx=1 = 25min) = 2026-04-30 21:25 UTC.
+    expect(slot.toISOString()).toBe('2026-04-30T21:25:00.000Z');
+  });
+
+  it('rolls year boundary correctly: 2026-12-31 +1 day → 2027-01-01 (JST)', () => {
+    // now = 2026-12-31 22:00 JST = 2026-12-31 13:00 UTC.
+    // publishIndex=1 → JST 2027-01-01 06:25 = 2026-12-31 21:25 UTC.
+    const now = new Date('2026-12-31T13:00:00Z');
+    const slot = computeNextSlot({
+      cadence,
+      publishIndex: 1,
+      existingTimes: [],
+      now,
+    });
+    expect(slot.toISOString()).toBe('2026-12-31T21:25:00.000Z');
+    // Sanity: that ISO ms maps to JST 2027-01-01.
+    const jstView = new Date(slot.getTime() + 9 * 60 * 60_000);
+    expect(jstView.getUTCFullYear()).toBe(2027);
+    expect(jstView.getUTCMonth() + 1).toBe(1);
+    expect(jstView.getUTCDate()).toBe(1);
+  });
+
+  it('does not produce malformed dates when crossing month-end during the +1d push loop', () => {
+    // now = 2026-04-30 21:30 UTC = 2026-05-01 06:30 JST. publishIndex=0
+    // would naturally place at JST 2026-05-01 06:18 = 2026-04-30T21:18Z,
+    // which is < now+5min, so the loop pushes +1 day → JST 2026-05-02
+    // 06:18 = 2026-05-01T21:18Z. Confirms no Apr-31-style corruption.
+    const now = new Date('2026-04-30T21:30:00Z');
+    const slot = computeNextSlot({
+      cadence,
+      publishIndex: 0,
+      existingTimes: [],
+      now,
+    });
+    expect(slot.toISOString()).toBe('2026-05-01T21:18:00.000Z');
+  });
+
   it('falls back to +1 day after 5 failed gap attempts', () => {
     const now = new Date('2026-05-02T00:00:00Z');
     const natural = computeNextSlot({

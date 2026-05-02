@@ -25,6 +25,14 @@ export interface HandlerContext {
   readonly logger: Logger;
   /** Discord user id of the requester (for log lines / approval ownership). */
   readonly authorId?: string | null;
+  /**
+   * Discord user id of the actual requester for THIS turn / interaction.
+   * Distinct from {@link authorId} (which may be set globally on the
+   * default context). Operator-only handlers MUST cross-check this id
+   * against {@link operatorDiscordUserIds}; an empty allowlist or a
+   * missing requesterUserId means no operator powers.
+   */
+  readonly requesterUserId?: string | null;
   /** Operator allowlist. Some destructive actions cross-check this. */
   readonly operatorDiscordUserIds?: ReadonlyArray<string>;
   /**

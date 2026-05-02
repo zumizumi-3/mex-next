@@ -25,17 +25,28 @@ export interface MigrationResult<T> {
 /**
  * Python 版 `STATE_DEFAULTS` で dict<id, session> として持たれていた field を、
  * 配列に変換する (forward 互換のため受け入れる、内部表現は配列に統一)。
+ *
+ * `inbound_reply_sessions` / `inbound_reaction_sessions` は collector が
+ * `Record<event_id, session>` として書き戻すので、ここでは array→dict 方向に
+ * 正規化する (legacy array shape のみ救済)。
  */
 const SESSION_DICT_TO_ARRAY_FIELDS = [
   'posting_sessions',
-  'inbound_reaction_sessions',
-  'inbound_reply_sessions',
   'weekly_retro_sessions',
   'periodic_retro_sessions',
   'inbound_quote_sessions',
   'engagement_campaign_sessions',
   'onboarding_sessions',
   'first_window_sessions',
+] as const;
+
+/**
+ * Inbound session dict-shaped field. Collector writes a
+ * `Record<event_id, session>`; legacy state.json may still be array.
+ */
+const SESSION_ARRAY_TO_DICT_FIELDS = [
+  'inbound_reply_sessions',
+  'inbound_reaction_sessions',
 ] as const;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -66,6 +77,51 @@ function convertSessionDictToArray(
       // 不正値 (string/number) → 空配列
       next[field] = [];
       changes.push(`${field}: invalid type → []`);
+    }
+  }
+  return next;
+}
+
+/**
+ * Inbound reply / reaction sessions: collector keys by `event_id`.
+ * Convert legacy `array<session>` shape to `Record<event_id, session>`.
+ * Sessions without a usable key are dropped (cannot dedupe).
+ */
+function convertInboundSessionsArrayToDict(
+  state: Record<string, unknown>,
+  changes: string[]
+): Record<string, unknown> {
+  const next = { ...state };
+  for (const field of SESSION_ARRAY_TO_DICT_FIELDS) {
+    const current = next[field];
+    if (Array.isArray(current)) {
+      const map: Record<string, unknown> = {};
+      let dropped = 0;
+      for (const entry of current) {
+        if (!isPlainObject(entry)) {
+          dropped += 1;
+          continue;
+        }
+        const key =
+          (typeof entry['event_id'] === 'string' && entry['event_id']) ||
+          (typeof entry['id'] === 'string' && entry['id']) ||
+          '';
+        if (!key) {
+          dropped += 1;
+          continue;
+        }
+        map[key] = entry;
+      }
+      next[field] = map;
+      changes.push(
+        `${field}: array→dict (${Object.keys(map).length} items${dropped ? `, ${dropped} dropped` : ''})`,
+      );
+    } else if (current === undefined) {
+      next[field] = {};
+      changes.push(`${field}: missing → {}`);
+    } else if (!isPlainObject(current)) {
+      next[field] = {};
+      changes.push(`${field}: invalid type → {}`);
     }
   }
   return next;
@@ -264,6 +320,7 @@ export function migrateState(input: unknown): MigrationResult<StateJson> {
   }
 
   working = convertSessionDictToArray(working, changes);
+  working = convertInboundSessionsArrayToDict(working, changes);
   working = normalizePublishQueue(working, changes);
   working = ensureRuntimeFields(working, changes);
   working = coercePostingSessionShape(working, changes);

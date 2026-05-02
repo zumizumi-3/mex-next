@@ -7,6 +7,7 @@
 
 import type { HandlerContext, HandlerResult, HandlerArgs } from './types.js';
 import { runInitialTraining, DEFAULT_TRAINING_COUNT } from '../initial-training/collector.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 function clampCount(raw: unknown): number {
   const value = Number(raw);
@@ -23,7 +24,7 @@ export async function handleTrainingRun(
 ): Promise<HandlerResult> {
   if (!ctx.xApi) {
     return {
-      content: '⚠️ X API が未接続です。training は X API がないと過去投稿を取得できません。',
+      content: `${STATE_EMOJI.attention} X API が未接続です。training は X API がないと過去投稿を取得できません。`,
       tag: 'training.run.no_xapi',
     };
   }
@@ -47,6 +48,9 @@ export async function handleTrainingRun(
     return { content: lines.join('\n'), tag: 'training.run' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { content: `❌ 初期学習に失敗しました: ${message}`, tag: 'training.run.fail' };
+    return {
+      content: `${STATE_EMOJI.error} 初期学習に失敗しました: ${message}`,
+      tag: 'training.run.fail',
+    };
   }
 }

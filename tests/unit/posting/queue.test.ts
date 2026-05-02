@@ -64,6 +64,36 @@ describe('enqueuePublish', () => {
       }),
     ).rejects.toMatchObject({ name: 'EnqueueDuplicateError', reason: 'too_similar_recent' });
   });
+
+  it('also rejects when an existing held item shares the prefix', async () => {
+    // Pre-seed a `held` item directly into the queue. Held items are
+    // pending operator review and must still block dedup of incoming
+    // identical bodies.
+    const repo = new InMemoryAccountRepo({
+      state: {
+        publish_queue: [
+          item({
+            publish_id: 'p_held',
+            content_id: 'c_held',
+            status: 'held',
+            scheduled_at: '2026-05-02T08:00:00Z',
+            text_prefix: 'held prefix to dedup',
+          }),
+        ],
+      },
+    });
+    await expect(
+      enqueuePublish({
+        repo,
+        contentId: 'c_new',
+        scheduledAt: new Date('2026-05-02T09:00:00Z'),
+        text: 'held prefix to dedup',
+      }),
+    ).rejects.toMatchObject({
+      name: 'EnqueueDuplicateError',
+      reason: 'too_similar_recent',
+    });
+  });
 });
 
 describe('dueItems', () => {

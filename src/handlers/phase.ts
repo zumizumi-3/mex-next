@@ -14,9 +14,12 @@ import {
   getPhaseQuestionnaireSession,
 } from '../phase-questionnaire/runner.js';
 import type { PhaseCadence } from '../phase-questionnaire/questions.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 function normalizeCadence(value: unknown): PhaseCadence {
-  const text = String(value ?? '').trim().toLowerCase();
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase();
   if (text === 'weekly' || text === 'monthly' || text === 'quarterly') {
     return text;
   }
@@ -40,13 +43,15 @@ export async function handlePhaseQuestionnaireStart(
     const lines = [
       `📋 ${cadenceLabel}アンケートを開始しました (\`${session.id}\`)`,
       `- 質問数: ${session.questions.length}`,
-      session.threadId ? `- スレッド: ${session.threadId}` : '- スレッド作成は失敗 (DM 経由を確認してください)',
+      session.threadId
+        ? `- スレッド: ${session.threadId}`
+        : '- スレッド作成は失敗 (DM 経由を確認してください)',
     ];
     return { content: lines.join('\n'), tag: 'phase.questionnaire_start' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      content: `❌ アンケートの開始に失敗しました: ${message}`,
+      content: `${STATE_EMOJI.error} アンケートの開始に失敗しました: ${message}`,
       tag: 'phase.questionnaire_start.fail',
     };
   }
@@ -57,7 +62,9 @@ export async function handlePhaseQuestionnaireStatus(
   args: HandlerArgs,
 ): Promise<HandlerResult> {
   const sessionIdRaw = String(args.session_id ?? '').trim();
-  const cadenceRaw = String(args.cadence ?? '').trim().toLowerCase();
+  const cadenceRaw = String(args.cadence ?? '')
+    .trim()
+    .toLowerCase();
   const cadence: PhaseCadence | undefined =
     cadenceRaw === 'weekly' || cadenceRaw === 'monthly' || cadenceRaw === 'quarterly'
       ? (cadenceRaw as PhaseCadence)
@@ -84,12 +91,17 @@ export async function handlePhaseQuestionnaireStatus(
 
   const sessions = await listPhaseQuestionnaireSessions(ctx.repo, cadence);
   if (sessions.length === 0) {
-    return { content: 'アンケートセッションはまだありません。', tag: 'phase.questionnaire_status.empty' };
+    return {
+      content: 'アンケートセッションはまだありません。',
+      tag: 'phase.questionnaire_status.empty',
+    };
   }
   const recent = sessions.slice(-5).reverse();
   const lines = ['📋 最近のアンケート'];
   for (const s of recent) {
-    lines.push(`- \`${s.id}\` ${s.cadence} ${s.status} (${Object.keys(s.answers).length}/${s.questions.length})`);
+    lines.push(
+      `- \`${s.id}\` ${s.cadence} ${s.status} (${Object.keys(s.answers).length}/${s.questions.length})`,
+    );
   }
   return { content: lines.join('\n'), tag: 'phase.questionnaire_status' };
 }
@@ -101,14 +113,14 @@ export async function handlePhaseQuestionnaireSubmit(
   const sessionId = String(args.session_id ?? '').trim();
   if (!sessionId) {
     return {
-      content: '⚠️ session_id を指定してください。',
+      content: `${STATE_EMOJI.attention} session_id を指定してください。`,
       tag: 'phase.questionnaire_submit.missing_id',
     };
   }
   const answersRaw = args.answers;
   if (!answersRaw || typeof answersRaw !== 'object') {
     return {
-      content: '⚠️ answers (id → 回答) を指定してください。',
+      content: `${STATE_EMOJI.attention} answers (id → 回答) を指定してください。`,
       tag: 'phase.questionnaire_submit.missing_answers',
     };
   }
@@ -125,10 +137,7 @@ export async function handlePhaseQuestionnaireSubmit(
       answers,
       logger: ctx.logger,
     });
-    const lines = [
-      `📋 アンケート \`${session.id}\` を集約しました`,
-      `- status: ${session.status}`,
-    ];
+    const lines = [`📋 アンケート \`${session.id}\` を集約しました`, `- status: ${session.status}`];
     if (session.synthesis) {
       lines.push('', '**summary**', session.synthesis.summary || '_未生成_');
       if (session.synthesis.recommendedActions.length > 0) {
@@ -138,13 +147,13 @@ export async function handlePhaseQuestionnaireSubmit(
         }
       }
     } else if (session.lastError) {
-      lines.push('', `⚠️ 集約失敗: ${session.lastError}`);
+      lines.push('', `${STATE_EMOJI.attention} 集約失敗: ${session.lastError}`);
     }
     return { content: lines.join('\n'), tag: 'phase.questionnaire_submit' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      content: `❌ アンケート集約に失敗しました: ${message}`,
+      content: `${STATE_EMOJI.error} アンケート集約に失敗しました: ${message}`,
       tag: 'phase.questionnaire_submit.fail',
     };
   }

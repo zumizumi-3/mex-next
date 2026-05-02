@@ -7,6 +7,7 @@
 
 import type { HandlerContext, HandlerResult, HandlerArgs } from './types.js';
 import { runSeed, DEFAULT_SEED_COUNT } from '../content-seeding/seed.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 function clampCount(raw: unknown): number {
   const value = Number(raw);
@@ -52,7 +53,9 @@ export async function handleSeedRun(
 
     const lines: string[] = [];
     if (result.generated.length === 0) {
-      lines.push(`⚠️ ドラフトを 1 件も生成できませんでした (失敗 ${result.failed.length} 件)。`);
+      lines.push(
+        `${STATE_EMOJI.attention} ドラフトを 1 件も生成できませんでした (失敗 ${result.failed.length} 件)。`,
+      );
     } else {
       const headline = approveAll
         ? `🌱 ${result.generated.length} 本のドラフトを生成し、全件 schedule に流しました。`
@@ -74,6 +77,9 @@ export async function handleSeedRun(
     return { content: lines.join('\n'), tag: 'seed.run' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { content: `❌ seeding に失敗しました: ${message}`, tag: 'seed.run.fail' };
+    return {
+      content: `${STATE_EMOJI.error} seeding に失敗しました: ${message}`,
+      tag: 'seed.run.fail',
+    };
   }
 }

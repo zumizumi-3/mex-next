@@ -12,7 +12,10 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino from 'pino';
-import { runSeed } from '../../../src/content-seeding/seed.js';
+import {
+  runSeed,
+  extractTopicsFromAccount,
+} from '../../../src/content-seeding/seed.js';
 import { AccountRepo } from '../../../src/account-state/repo.js';
 import type { LlmProvider } from '../../../src/llm/bridge.js';
 
@@ -196,6 +199,84 @@ describe('runSeed — approve_all', () => {
     }
   });
 
+  it('LLM topic generation 失敗時に brand / active_window 由来の topic を派生する', async () => {
+    // Make the LLM call fail for topics, succeed for everything else.
+    const workDir = await mkdtemp(join(tmpdir(), 'mex-seed-derive-'));
+    await writeFile(
+      join(workDir, 'account.json'),
+      JSON.stringify(
+        {
+          account_id: 'zumi-x',
+          display_name: 'tester',
+          voice_profile: { tone: 'calm', first_person: '私', forbidden_tones: [] },
+          brand: {
+            positioning: '中小企業の社内デジタル化',
+            value_props: ['手間を減らす', '型を渡す'],
+            pillars: ['段取り設計', '小さく回す'],
+          },
+          goal_stack: [],
+          writing_exemplars: [],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+    await writeFile(
+      join(workDir, 'state.json'),
+      JSON.stringify(
+        {
+          account_id: 'zumi-x',
+          current_phase: 'needs_diagnosis',
+          active_window: { theme: '今月の検証テーマ', topics: ['失敗の分解', '読まれる順番'] },
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+    const repo = new AccountRepo(workDir);
+
+    let topicCallCount = 0;
+    const bridge: LlmProvider = {
+      async call(opt) {
+        if (opt.kind === 'content_seeding_topics') {
+          topicCallCount += 1;
+          throw new Error('topic_llm_down');
+        }
+        if (opt.kind === 'post_v2_generate') {
+          return { text: JSON.stringify({ text: SAMPLE_DRAFT_TEXT }), usage: { input: 0, output: 0 } };
+        }
+        if (opt.kind === 'post_v2_quality_judge') {
+          return { text: PASSING_JUDGE, usage: { input: 0, output: 0 } };
+        }
+        return { text: '{}', usage: { input: 0, output: 0 } };
+      },
+    };
+
+    const result = await runSeed({ repo, bridge, request: { count: 3 } });
+    expect(topicCallCount).toBe(1); // LLM tried once
+    expect(result.generated.length + result.failed.length).toBeGreaterThan(0);
+
+    // The derived topics should appear in the per-item topic field
+    // (NOT the static placeholder 〝今日の運用で気づいたこと〟 etc.).
+    const usedTopics = result.generated.map((g) => g.topic);
+    const derivedSet = new Set([
+      '中小企業の社内デジタル化',
+      '手間を減らす',
+      '型を渡す',
+      '段取り設計',
+      '小さく回す',
+      '今月の検証テーマ',
+      '失敗の分解',
+      '読まれる順番',
+    ]);
+    const overlap = usedTopics.filter((t) => derivedSet.has(t));
+    expect(overlap.length).toBeGreaterThan(0);
+
+    await rm(workDir, { recursive: true, force: true });
+  });
+
   it('seed_sessions 配列が state.json に保存される', async () => {
     scaf = await setup();
     await runSeed({
@@ -208,5 +289,58 @@ describe('runSeed — approve_all', () => {
     ) as { seed_sessions?: unknown[] };
     expect(Array.isArray(persisted.seed_sessions)).toBe(true);
     expect(persisted.seed_sessions!.length).toBe(1);
+  });
+});
+
+describe('extractTopicsFromAccount — derivation rules', () => {
+  it('active_window.topics と brand.value_props を両方拾う', () => {
+    const out = extractTopicsFromAccount({
+      accountObj: { display_name: 'tester' },
+      activeWindow: { topics: ['T-A', 'T-B'] },
+      brand: { value_props: ['V-1', 'V-2'] },
+      count: 5,
+    });
+    expect(out).toEqual(expect.arrayContaining(['T-A', 'T-B', 'V-1', 'V-2']));
+  });
+
+  it('count を超えない', () => {
+    const out = extractTopicsFromAccount({
+      accountObj: {},
+      activeWindow: { topics: Array.from({ length: 10 }, (_, i) => `t${i}`) },
+      brand: {},
+      count: 3,
+    });
+    expect(out).toHaveLength(3);
+  });
+
+  it('空の input なら空配列を返す', () => {
+    const out = extractTopicsFromAccount({
+      accountObj: {},
+      activeWindow: {},
+      brand: {},
+      count: 5,
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it('80 文字超の string は除外', () => {
+    const long = 'x'.repeat(120);
+    const out = extractTopicsFromAccount({
+      accountObj: {},
+      activeWindow: { theme: long, topics: ['短い'] },
+      brand: {},
+      count: 5,
+    });
+    expect(out).toEqual(['短い']);
+  });
+
+  it('重複は除去される', () => {
+    const out = extractTopicsFromAccount({
+      accountObj: {},
+      activeWindow: { topics: ['同じ', '同じ', '別'] },
+      brand: {},
+      count: 5,
+    });
+    expect(out).toEqual(['同じ', '別']);
   });
 });

@@ -66,6 +66,9 @@ function createRepoFixture(initial?: {
     async saveState(state) {
       fixture.state = JSON.parse(JSON.stringify(state));
     },
+    async writeState(state) {
+      fixture.state = JSON.parse(JSON.stringify(state));
+    },
     async loadDraftText() {
       return null;
     },

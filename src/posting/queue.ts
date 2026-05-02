@@ -19,6 +19,7 @@ import type {
   PublishItem,
   StateJson,
 } from '../account-state/types.js';
+import { assertSafeId } from '../account-state/repo.js';
 import { parseIso, toIsoZ } from '../utils/jst.js';
 import { textPrefix } from './dedup.js';
 import { computeNextSlot, ensureMinGap, getExistingPublishTimes } from './scheduler.js';
@@ -50,7 +51,12 @@ export async function enqueuePublish(opts: {
   variant?: string;
   now?: Date;
 }): Promise<EnqueueResult> {
-  const { repo, contentId, scheduledAt, text } = opts;
+  const { repo, scheduledAt, text } = opts;
+  // Reject any contentId containing path traversal markers before it
+  // reaches the filesystem. enqueuePublish does not touch the FS itself,
+  // but markPublished/etc. read draft.json by content_id, so the value
+  // is fs-bound transitively.
+  const contentId = assertSafeId(opts.contentId, 'content_id');
   const variant = opts.variant ?? 'primary';
   const prefix = textPrefix(text);
   const scheduledIso = toIsoZ(scheduledAt);
@@ -59,7 +65,17 @@ export async function enqueuePublish(opts: {
   return repo.withStateLock(async (state) => {
     const queue: PublishItem[] = state.publish_queue ?? [];
     for (const item of queue) {
-      if (item.status !== 'scheduled' && item.status !== 'published') continue;
+      // `held` items are pending operator review; they still occupy
+      // a future slot and the same body will trip the dedup check
+      // when they are eventually released. Treat them as live for
+      // dedup purposes alongside scheduled / published.
+      if (
+        item.status !== 'scheduled' &&
+        item.status !== 'held' &&
+        item.status !== 'published'
+      ) {
+        continue;
+      }
       if (item.content_id === contentId && item.scheduled_at === scheduledIso) {
         throw new EnqueueDuplicateError('same_content_and_time', item);
       }
@@ -215,7 +231,8 @@ export async function markPublished(opts: {
   tweetId: string;
   now?: Date;
 }): Promise<PublishItem | null> {
-  const { repo, publishId, tweetId } = opts;
+  const { repo, tweetId } = opts;
+  const publishId = assertSafeId(opts.publishId, 'publish_id');
   const now = nowIso(opts.now);
   return repo.withStateLock(async (state) => {
     const queue: PublishItem[] = state.publish_queue ?? [];
@@ -256,7 +273,8 @@ export async function markFailed(opts: {
   reason: string;
   now?: Date;
 }): Promise<PublishItem | null> {
-  const { repo, publishId, reason } = opts;
+  const { repo, reason } = opts;
+  const publishId = assertSafeId(opts.publishId, 'publish_id');
   const now = nowIso(opts.now);
   return repo.withStateLock(async (state) => {
     const queue: PublishItem[] = state.publish_queue ?? [];
@@ -300,7 +318,8 @@ export async function reschedulePublish(opts: {
   when?: 'soon' | 'next-slot';
   now?: Date;
 }): Promise<PublishItem | null> {
-  const { repo, publishId } = opts;
+  const { repo } = opts;
+  const publishId = assertSafeId(opts.publishId, 'publish_id');
   const when = opts.when ?? 'next-slot';
   const now = opts.now ?? new Date();
 

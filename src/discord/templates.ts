@@ -46,6 +46,7 @@ export const PROGRESS_TEMPLATES = {
 } as const;
 
 export const BUSY_REPLY_TEMPLATE = `${STATE_EMOJI.busy} 前の処理がまだ動いています。終わるのを待ちます。`;
+export const OVERLOAD_REPLY_TEMPLATE = `${STATE_EMOJI.busy} 現在処理中のメッセージが多いので少々お待ちください。前の処理が終わってからもう一度送ってください。`;
 
 /** Standard button labels and styles, kept consistent across modules. */
 export const BUTTON_LABELS = {
@@ -124,3 +125,26 @@ export const DISCORD_MESSAGE_MAX_CHARS = 2000;
 
 /** Soft limit we target so that emoji / mentions don't push us over. */
 export const DISCORD_MESSAGE_SOFT_LIMIT = 1900;
+
+/** Suffix appended when `truncateForDiscord` actually truncates. */
+export const DISCORD_TRUNCATION_SUFFIX = '\n…(続きは略)';
+
+/**
+ * Truncate `text` for safe Discord delivery.
+ *
+ * Discord rejects single messages > 2000 chars with HTTP 413. Our
+ * progress indicator and a few handlers stuff long LLM output into
+ * `editReply` — when output blows past the soft limit we fall back to
+ * a head-slice + ellipsis so the customer at least sees the start.
+ *
+ * Pure: returns the same string when it already fits.
+ */
+export function truncateForDiscord(
+  text: string,
+  limit: number = DISCORD_MESSAGE_SOFT_LIMIT,
+): string {
+  const safeLimit = Math.max(1, Math.floor(limit));
+  if (typeof text !== 'string') return '';
+  if (text.length <= safeLimit) return text;
+  return `${text.slice(0, safeLimit)}${DISCORD_TRUNCATION_SUFFIX}`;
+}

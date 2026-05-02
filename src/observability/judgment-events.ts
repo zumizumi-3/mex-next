@@ -93,6 +93,12 @@ export class JudgmentEventStream {
    * Errors are propagated — the caller decides whether to retry or
    * swallow. Most call sites should `.catch(() => {})` since judgment
    * sink failures must NEVER block the runtime.
+   *
+   * Payload is run through `sanitizePayload` to redact obviously
+   * secret-shaped substrings (Anthropic / Slack tokens, PEM private
+   * keys, long hex tokens) before persistence. The walk is depth-
+   * limited and cycle-safe so a malicious / unexpected input cannot
+   * stall the writer.
    */
   async emit(event: Omit<JudgmentEvent, 'id' | 'timestamp'>): Promise<void> {
     const enriched: JudgmentEvent = {
@@ -100,7 +106,7 @@ export class JudgmentEventStream {
       timestamp: this.now().toISOString(),
       accountId: event.accountId,
       kind: event.kind,
-      payload: event.payload,
+      payload: sanitizePayload(event.payload) as Record<string, unknown>,
     };
     const line = JSON.stringify(enriched) + '\n';
     const next = this.writeChain.then(() => this.appendWithRotation(line));
@@ -261,6 +267,104 @@ function matchesQuery(event: JudgmentEvent, opts: QueryOptions): boolean {
     if (Number.isNaN(t) || t < opts.sinceMs) return false;
   }
   return true;
+}
+
+/**
+ * Substring patterns we redact before appending to the JSONL sink.
+ *
+ * These are heuristic — they only catch obviously secret-shaped
+ * tokens (Anthropic API keys, Slack bot tokens, PEM private key
+ * blocks, long hex strings that look like API tokens / hashes). Real
+ * secret hygiene still belongs upstream, but this layer prevents an
+ * accidental `console.log`-style leak from being persisted in plain
+ * text on the operator's disk.
+ *
+ * Patterns are intentionally anchored to high-signal prefixes / shapes
+ * so we don't false-positive on URLs / ULIDs / regular content.
+ */
+const REDACTION_TOKEN = '[REDACTED]';
+
+const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
+  // Anthropic API keys (also covers `sk-ant-api03-*` form).
+  /sk-ant-[A-Za-z0-9_-]{8,}/g,
+  // Slack bot / user / app tokens.
+  /xox[baprs]-[A-Za-z0-9-]{8,}/g,
+  // GitHub fine-grained / classic tokens.
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
+  // PEM-armored private keys (block).
+  /-----BEGIN [A-Z][A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z][A-Z ]*PRIVATE KEY-----/g,
+  // PEM header alone (defensive — partial captures still get redacted).
+  /-----BEGIN [A-Z][A-Z ]*KEY-----/g,
+  // Long hex tokens (>= 64 hex chars) — covers API hash tokens.
+  /\b[a-fA-F0-9]{64,}\b/g,
+];
+
+/**
+ * Maximum depth we recurse into payload structures. Discord embeds and
+ * judge results never go deeper than ~6 — 12 leaves a generous margin
+ * without enabling DoS via deeply nested payload.
+ */
+const MAX_SANITIZE_DEPTH = 12;
+
+/**
+ * Redact secret-shaped substrings in a string value.
+ */
+function redactString(value: string): string {
+  let out = value;
+  for (const pattern of SECRET_PATTERNS) {
+    out = out.replace(pattern, REDACTION_TOKEN);
+  }
+  return out;
+}
+
+/**
+ * Walk a value and return a deep-cloned, sanitized copy. Cycles and
+ * over-deep nesting are short-circuited to `'[TRUNCATED]'` so we
+ * never spin forever on hostile input.
+ *
+ * Exported for unit tests; production callers should not need to invoke
+ * it directly — `emit()` always runs payloads through it.
+ */
+export function sanitizePayload(value: unknown): unknown {
+  return sanitizeValue(value, 0, new WeakSet());
+}
+
+function sanitizeValue(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+): unknown {
+  if (depth > MAX_SANITIZE_DEPTH) return '[TRUNCATED]';
+  if (value === null) return null;
+  const t = typeof value;
+  if (t === 'string') return redactString(value as string);
+  if (t === 'number' || t === 'boolean' || t === 'undefined' || t === 'bigint') {
+    return value;
+  }
+  if (t === 'function' || t === 'symbol') {
+    // Not JSON-representable — drop to keep the JSONL clean.
+    return undefined;
+  }
+  if (t !== 'object') return value;
+
+  const obj = value as object;
+  if (seen.has(obj)) return '[CYCLE]';
+  seen.add(obj);
+
+  if (Array.isArray(obj)) {
+    const arr: unknown[] = [];
+    for (const item of obj) {
+      arr.push(sanitizeValue(item, depth + 1, seen));
+    }
+    return arr;
+  }
+
+  // Plain-ish object — copy own enumerable keys.
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    out[k] = sanitizeValue(v, depth + 1, seen);
+  }
+  return out;
 }
 
 /**

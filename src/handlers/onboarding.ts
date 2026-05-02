@@ -21,15 +21,11 @@ import {
   renderQuestion,
   type OnboardingSession,
 } from '../onboarding/collector.js';
-import {
-  ONBOARDING_QUESTIONS,
-  findQuestionById,
-} from '../onboarding/questions.js';
+import { ONBOARDING_QUESTIONS, findQuestionById } from '../onboarding/questions.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 /** Build a collector tied to the handler context. */
-export function buildCollectorFromContext(
-  ctx: HandlerContext,
-): OnboardingCollector {
+export function buildCollectorFromContext(ctx: HandlerContext): OnboardingCollector {
   return new OnboardingCollector({
     repo: ctx.repo,
     bridge: ctx.bridge,
@@ -72,8 +68,7 @@ export async function handleOnboardStatus(
   const session = await collector.getActive();
   if (!session) {
     return {
-      content:
-        'いまオンボーディング中ではありません。`/mex onboard start` で始められます。',
+      content: 'いまオンボーディング中ではありません。`/mex onboard start` で始められます。',
       tag: 'onboard.status.idle',
     };
   }
@@ -109,7 +104,7 @@ export async function handleOnboardCancel(
   }
   await collector.cancel(session.id);
   return {
-    content: `🛑 オンボーディング (\`${session.id}\`) を中断しました。やり直したい時は「最初から」と話しかけてください。`,
+    content: `${STATE_EMOJI.cancelled} オンボーディング (\`${session.id}\`) を中断しました。やり直したい時は「最初から」と話しかけてください。`,
     tag: 'onboard.cancel',
   };
 }
@@ -129,13 +124,9 @@ export async function applyFreeFormAnswer(
 ): Promise<string> {
   const collector = buildCollectorFromContext(ctx);
   const trimmed = rawText.trim();
-  if (
-    trimmed === 'やめる' ||
-    trimmed.toLowerCase() === 'cancel' ||
-    trimmed === '中止'
-  ) {
+  if (trimmed === 'やめる' || trimmed.toLowerCase() === 'cancel' || trimmed === '中止') {
     await collector.cancel(session.id);
-    return `🛑 オンボーディング (\`${session.id}\`) を中断しました。`;
+    return `${STATE_EMOJI.cancelled} オンボーディング (\`${session.id}\`) を中断しました。`;
   }
   const skipping = trimmed === 'skip' || trimmed === 'スキップ' || trimmed === '飛ばす';
   let answer: unknown = trimmed;
@@ -144,48 +135,30 @@ export async function applyFreeFormAnswer(
     if (cur && !cur.required) {
       answer = '';
     } else {
-      return '⚠️ この質問は必須なのでスキップできません。回答を入力してください。';
+      return `${STATE_EMOJI.attention} この質問は必須なのでスキップできません。回答を入力してください。`;
     }
   }
   const updated = await collector.answerCurrent(session.id, answer);
   if (updated.state === 'completed') {
     try {
       const finalize = await collector.finalize(updated.id);
-      // Auto-bootstrap: don't make the customer click "next wizard" — kick
-      // off the first daily auto-post so they get an actionable draft card
-      // immediately. The cron timer takes over for tomorrow's posts.
-      let firstDraftLine = '';
-      try {
-        const outcome = await bootstrapFirstDraft(ctx);
-        if (outcome.kind === 'awaiting_decision') {
-          firstDraftLine =
-            `\n📝 最初の投稿案も作りました (\`${outcome.sessionId}\`)。`
-            + (outcome.threadId
-              ? ` thread <#${outcome.threadId}> で承認 / 修正 / 見送りを選んでください。`
-              : ' 同 channel に投稿候補を出しています。');
-        } else if (outcome.kind === 'skip_active_session') {
-          firstDraftLine = `\n📝 既に進行中の投稿セッションがあります (\`${outcome.sessionId}\`)。そちらの判断をお願いします。`;
-        } else if (outcome.kind === 'skip_today') {
-          firstDraftLine = '\n📝 今日は skip 設定なので、明日の朝に最初の投稿案を作ります。';
-        } else {
-          firstDraftLine = `\n⚠️ 最初の投稿案の生成でつまずきました: ${outcome.reason}`;
-        }
-      } catch (bootError) {
-        const msg = bootError instanceof Error ? bootError.message : String(bootError);
-        ctx.logger.warn?.({ error: msg }, 'first_auto_draft_failed');
-        firstDraftLine = `\n⚠️ 最初の投稿案の生成に失敗: ${msg} (operator 通知済)`;
-      }
+      // Auto-bootstrap as a fire-and-forget background task:
+      // indexContext + generateCandidate + 5-axis judge can take 30+
+      // seconds. Don't make the customer wait at the end of the wizard.
+      // The background task posts its own thread when ready, or escalates
+      // to the operator on failure.
+      runBootstrapFirstDraftInBackground(ctx);
       return [
-        `✅ オンボーディング完了！ account.json を更新しました。`,
+        `${STATE_EMOJI.ok} オンボーディング完了！ account.json を更新しました。`,
         `- account_id: \`${finalize.account.account_id}\``,
         `- display_name: ${finalize.account.display_name}`,
         '',
         '日次運用開始。明朝 07:00 JST から自動で投稿候補が作られます。',
-        firstDraftLine,
+        '\n📝 最初の投稿候補を作成中です…(まもなく別 thread で届きます)',
       ].filter(Boolean).join('\n');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return `⚠️ 全質問の回答は保存しましたが、account.json への反映でエラー: ${message}`;
+      return `${STATE_EMOJI.attention} 全質問の回答は保存しましたが、account.json への反映でエラー: ${message}`;
     }
   }
   if (updated.state === 'expired') {
@@ -233,9 +206,7 @@ function adaptBridgeForPosting(ctx: HandlerContext): PostingLlmProvider {
  * triggered immediately after onboarding finishes — so the customer
  * never has to "click next wizard".
  */
-async function bootstrapFirstDraft(
-  ctx: HandlerContext,
-): Promise<FirstDraftOutcome> {
+async function bootstrapFirstDraft(ctx: HandlerContext): Promise<FirstDraftOutcome> {
   const today = jstDateString(new Date());
   if (await isSkipped({ repo: asPostingMachineRepo(ctx.repo) as never, date: today })) {
     return { kind: 'skip_today' };
@@ -311,9 +282,74 @@ async function bootstrapFirstDraft(
       silent: false,
       metadata: { sessionId: session.id, kind: 'onboarding_bootstrap' },
     });
-    return { kind: 'awaiting_decision', sessionId: session.id, ...(result.threadId ? { threadId: result.threadId } : {}) };
+    return {
+      kind: 'awaiting_decision',
+      sessionId: session.id,
+      ...(result.threadId ? { threadId: result.threadId } : {}),
+    };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return { kind: 'fail', reason };
   }
+}
+
+/**
+ * Fire-and-forget wrapper for bootstrapFirstDraft.
+ *
+ * Returns immediately. The pipeline runs on the next tick; on
+ * completion the draft card is posted via DiscordPoster (already
+ * handled inside bootstrapFirstDraft on the success path), and on
+ * failure we escalate to the operator channel so they can investigate
+ * before the customer notices the missing card.
+ *
+ * Exported so tests can directly assert that the background work
+ * completes without the caller awaiting it.
+ */
+export function runBootstrapFirstDraftInBackground(
+  ctx: HandlerContext,
+): Promise<void> {
+  // Detach scheduling from the caller's microtask so the customer
+  // reply flushes before the heavy LLM pipeline kicks in.
+  const work = (async (): Promise<void> => {
+    let outcome: FirstDraftOutcome;
+    try {
+      outcome = await bootstrapFirstDraft(ctx);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      ctx.logger.warn?.({ error: reason }, 'bootstrap_first_draft_background_threw');
+      outcome = { kind: 'fail', reason };
+    }
+    if (outcome.kind === 'fail') {
+      ctx.logger.warn?.(
+        { reason: outcome.reason },
+        'bootstrap_first_draft_failed_background',
+      );
+      try {
+        const mention =
+          (ctx.operatorDiscordUserIds && ctx.operatorDiscordUserIds[0])
+            ? `<@${ctx.operatorDiscordUserIds[0]}> `
+            : '';
+        await ctx.discordPoster.postEscalation({
+          channelRole: 'operator',
+          content:
+            `${mention}[FAIL] onboarding bootstrap first draft\n`
+            + `account: ${ctx.accountId}\n`
+            + `reason: ${outcome.reason}`,
+          metadata: {
+            kind: 'onboarding_bootstrap_failed',
+            accountId: ctx.accountId,
+          },
+        });
+      } catch (escErr) {
+        ctx.logger.warn?.(
+          { error: escErr instanceof Error ? escErr.message : String(escErr) },
+          'bootstrap_first_draft_escalation_failed',
+        );
+      }
+    }
+  })();
+  // Swallow the rejection on the detached promise so unhandled-rejection
+  // listeners stay quiet — the inner block already logs + escalates.
+  work.catch(() => undefined);
+  return work;
 }

@@ -100,6 +100,46 @@ describe('recentAndScheduledTextPrefixes', () => {
     expect(out).toContain(textPrefix('future scheduled body'));
   });
 
+  it('keeps items that fall exactly on the daysBack / daysForward boundary (inclusive)', async () => {
+    // now = 2026-05-08T00:00Z. daysBack=7 → earliest = 2026-05-01T00:00Z.
+    // daysForward=7 → latest = 2026-05-15T00:00Z. Both edges should be
+    // kept (inclusive).
+    const now = new Date('2026-05-08T00:00:00Z');
+    const repo = new InMemoryAccountRepo({
+      state: {
+        publish_queue: [
+          item({
+            content_id: 'c_edge_published',
+            status: 'published',
+            executed_at: '2026-05-01T00:00:00Z', // exactly 7 days ago
+            text_prefix: 'edge published prefix',
+          }),
+          item({
+            content_id: 'c_edge_scheduled',
+            status: 'scheduled',
+            scheduled_at: '2026-05-15T00:00:00Z', // exactly 7 days ahead
+            text_prefix: 'edge scheduled prefix',
+          }),
+          item({
+            content_id: 'c_edge_held',
+            status: 'held',
+            scheduled_at: '2026-05-15T00:00:00Z', // exactly 7 days ahead, held
+            text_prefix: 'edge held prefix',
+          }),
+        ],
+      },
+    });
+    const out = await recentAndScheduledTextPrefixes({
+      repo,
+      daysBack: 7,
+      daysForward: 7,
+      now,
+    });
+    expect(out).toContain(textPrefix('edge published prefix'));
+    expect(out).toContain(textPrefix('edge scheduled prefix'));
+    expect(out).toContain(textPrefix('edge held prefix'));
+  });
+
   it('uses item.text_prefix when present without reading draft', async () => {
     const now = new Date('2026-05-02T00:00:00Z');
     const repo = new InMemoryAccountRepo({

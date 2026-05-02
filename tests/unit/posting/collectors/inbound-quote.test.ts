@@ -170,6 +170,86 @@ describe('collectInboundQuotes', () => {
     expect(cursors[0]).toMatchObject({ kind: 'search', scope: 'me', lastSinceId: '99' });
   });
 
+  it('marks session discord_pending when Discord post fails (retry on next run)', async () => {
+    const repo = makeRepo();
+    const xApi = makeXApi([tweet('710', 'great', 'src-7')]);
+    const bridge = makeBridge({
+      '710': { mode: 'quote', text: '同意です', rationale: 'positive' },
+    });
+    const poster: DiscordPoster = {
+      postThread: vi.fn(async () => {
+        throw new Error('discord 503');
+      }),
+      postEscalation: vi.fn(),
+    } as unknown as DiscordPoster;
+
+    const result = await collectInboundQuotes({
+      repo,
+      xApi,
+      bridge,
+      discordPoster: poster,
+      selfHandle: 'me',
+      recentSelfTweetIds: ['s1'],
+    });
+    expect(result.errors).toBe(1);
+    expect(result.posted).toBe(0);
+    const sessions = repo.state['inbound_reaction_sessions'] as Record<
+      string,
+      { status: string; draft_text: string }
+    >;
+    expect(sessions['710']?.status).toBe('discord_pending');
+    expect(sessions['710']?.draft_text).toBe('同意です');
+  });
+
+  it('retries discord_pending sessions on the next run without re-billing the LLM', async () => {
+    const repo = makeRepo();
+    const xApi = makeXApi([tweet('810', 'great', 'src-8')]);
+    const bridge = makeBridge({
+      '810': { mode: 'quote', text: '同意です', rationale: 'positive' },
+    });
+
+    const failingPoster: DiscordPoster = {
+      postThread: vi.fn(async () => {
+        throw new Error('discord 503');
+      }),
+      postEscalation: vi.fn(),
+    } as unknown as DiscordPoster;
+    await collectInboundQuotes({
+      repo,
+      xApi,
+      bridge,
+      discordPoster: failingPoster,
+      selfHandle: 'me',
+      recentSelfTweetIds: ['s1'],
+    });
+    expect(bridge.request).toHaveBeenCalledTimes(1);
+    let sessions = repo.state['inbound_reaction_sessions'] as Record<
+      string,
+      { status: string }
+    >;
+    expect(sessions['810']?.status).toBe('discord_pending');
+
+    // Recovery
+    const recoveryPoster = makePoster();
+    const result = await collectInboundQuotes({
+      repo,
+      xApi,
+      bridge,
+      discordPoster: recoveryPoster,
+      selfHandle: 'me',
+      recentSelfTweetIds: ['s1'],
+    });
+    expect(result.posted).toBe(1);
+    sessions = repo.state['inbound_reaction_sessions'] as Record<
+      string,
+      { status: string }
+    >;
+    expect(sessions['810']?.status).toBe('posted');
+    // LLM should not be re-invoked on retry.
+    expect(bridge.request).toHaveBeenCalledTimes(1);
+    expect(recoveryPoster.postThread).toHaveBeenCalledTimes(1);
+  });
+
   it('records error session when LLM rejects', async () => {
     const repo = makeRepo();
     const xApi = makeXApi([tweet('600', 'x')]);

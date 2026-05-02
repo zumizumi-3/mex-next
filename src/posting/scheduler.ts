@@ -15,10 +15,10 @@
 import type { CadenceConfig } from '../settings/cadence.js';
 import type { HotZone, PublishItem, StateJson } from '../account-state/types.js';
 import {
+  jstDateString,
   jstWallClockToUtc,
   parseHourMinute,
   parseIso,
-  toJstView,
 } from '../utils/jst.js';
 
 /**
@@ -102,6 +102,46 @@ function offsetMinutesForIndex(publishIndex: number): number {
 }
 
 /**
+ * Parse a `YYYY-MM-DD` string into a `[year, month, day]` tuple.
+ *
+ * Used to compute "today's JST calendar date + N days" via
+ * `setUTCDate`, which correctly handles month / year rollover.
+ * Throws on malformed input — we always feed it `jstDateString(now)`,
+ * so this is a programmer error if it ever fires.
+ */
+function parseJstYmd(ymd: string): [number, number, number] {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) throw new Error(`expected YYYY-MM-DD, got: ${ymd}`);
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+/**
+ * Add `days` to the JST calendar date of `instant`, preserving the
+ * JST hour:minute. Use this when shifting a scheduled slot by whole
+ * days so we never accidentally land on a non-existent date or skip
+ * a day across the UTC↔JST boundary.
+ *
+ * Algorithm: extract the JST wall-clock fields, advance the *date*
+ * field via `setUTCDate` (which lets JS handle month / year rollover),
+ * then reconstruct the UTC instant via `jstWallClockToUtc`.
+ */
+function addJstDays(instant: Date, days: number): Date {
+  const ymd = jstDateString(instant);
+  const [y, m, d] = parseJstYmd(ymd);
+  const cal = new Date(Date.UTC(y, m - 1, d));
+  cal.setUTCDate(cal.getUTCDate() + days);
+  // Preserve the JST hour / minute / second of `instant`.
+  const ms = instant.getTime();
+  const epochMidnightUtc = Date.UTC(y, m - 1, d) - 9 * 60 * 60_000;
+  const offsetWithinDay = ms - epochMidnightUtc;
+  return new Date(
+    Date.UTC(cal.getUTCFullYear(), cal.getUTCMonth(), cal.getUTCDate()) -
+      9 * 60 * 60_000 +
+      offsetWithinDay,
+  );
+}
+
+/**
  * Compute the next UTC slot for a publish.
  *
  * Algorithm (port of `_scheduled_at_for_publish` + `_ensure_min_gap`):
@@ -132,22 +172,33 @@ export function computeNextSlot(opts: {
   const [hour, minute] = parseHourMinute(zone.start, [9, 0]);
   const offsetMin = offsetMinutesForIndex(idx);
 
-  // Day = JST today + idx.
-  const jstNow = toJstView(now);
-  const dayJst = new Date(jstNow.getTime() + idx * 24 * 60 * 60_000);
-  let scheduled = jstWallClockToUtc(
-    dayJst.getUTCFullYear(),
-    dayJst.getUTCMonth() + 1,
-    dayJst.getUTCDate(),
-    hour,
-    minute,
-  );
+  // Day = JST today + idx, computed in the JST calendar so month / year
+  // boundaries don't slip. We:
+  //   1. take today's JST date string `YYYY-MM-DD`
+  //   2. construct a UTC midnight Date for that calendar day
+  //   3. use Date's setUTCDate to add `idx` days — JS handles month /
+  //      year rollover automatically (e.g. 2026-04-30 + 1 → 2026-05-01,
+  //      2026-12-31 + 1 → 2027-01-01).
+  // We never reach back through `toJstView + ms-add` because that path
+  // can produce incorrect calendar-day fields when the underlying
+  // arithmetic crosses a UTC day boundary near the offset edge.
+  const todayJstDate = jstDateString(now);
+  const [jstY, jstM, jstD] = parseJstYmd(todayJstDate);
+  const targetCal = new Date(Date.UTC(jstY, jstM - 1, jstD));
+  targetCal.setUTCDate(targetCal.getUTCDate() + idx);
+  const targetY = targetCal.getUTCFullYear();
+  const targetM = targetCal.getUTCMonth() + 1;
+  const targetD = targetCal.getUTCDate();
+
+  let scheduled = jstWallClockToUtc(targetY, targetM, targetD, hour, minute);
   scheduled = new Date(scheduled.getTime() + offsetMin * 60_000);
 
   // Ensure scheduled > now + 5min, otherwise +1 day until satisfied.
+  // We mutate via JST calendar add so the month / year boundary stays
+  // correct after a wraparound day-shift, too.
   const minimum = new Date(now.getTime() + 5 * 60_000);
   while (scheduled.getTime() <= minimum.getTime()) {
-    scheduled = new Date(scheduled.getTime() + 24 * 60 * 60_000);
+    scheduled = addJstDays(scheduled, 1);
   }
 
   if (existingTimes.length > 0) {

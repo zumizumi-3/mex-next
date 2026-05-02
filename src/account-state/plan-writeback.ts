@@ -132,8 +132,13 @@ function isValidProposal(
  *
  * Implementation notes:
  *   - All updates run inside a single `repo.withStateLock` so the file is
- *     locked once; we read account.json *inside* the lock and write it
- *     after the state.json transaction commits successfully.
+ *     locked once; we read account.json *inside* the lock and the
+ *     account is persisted *while still holding the lock* so a crash
+ *     between the two writes can never leave them inconsistent.
+ *   - If `saveAccount` throws, the state mutation is rolled back by
+ *     re-throwing out of the `withStateLock` callback (which leaves the
+ *     pre-existing state.json untouched). The caller observes the
+ *     error via `result.errors['__account_persist__']`.
  *   - Each proposal is applied independently — a per-target failure does
  *     not abort the others, but is recorded under `result.errors`.
  *   - Before-snapshots are pushed onto `state.plan_writeback_history` so
@@ -148,62 +153,71 @@ export async function applyWriteback(opts: {
   const errors: Record<string, string> = {};
   const before: Record<string, unknown> = {};
 
-  // Read account once outside the lock to capture "before" snapshots.
-  // Inside the lock we read it again and re-derive updates so concurrent
-  // writes are observed.
+  // Read account once outside the lock to capture "before" snapshots
+  // for the rollback record. The authoritative read happens inside the
+  // lock below.
   const accountSnapshot = await opts.repo.loadAccount();
 
   for (const proposal of opts.proposals) {
     before[proposal.target] = snapshotTarget(accountSnapshot, proposal.target);
   }
 
-  // Run state.json mutation under flock. account.json updates are computed
-  // here too and persisted right after the state lock releases.
-  let nextAccount: AccountJson | null = null;
+  // Run state.json + account.json mutation under a single flock so the
+  // two files are guaranteed to be either both updated or both
+  // unchanged. account.json is written *first* (inside the lock); on
+  // failure the callback re-throws and the state write never happens.
+  try {
+    await opts.repo.withStateLock(async (state: StateJson) => {
+      let nextState: StateJson = { ...state };
+      let workingAccount: AccountJson = deepClone(accountSnapshot) as AccountJson;
+      let touchedAccount = false;
 
-  await opts.repo.withStateLock(async (state: StateJson) => {
-    let nextState: StateJson = { ...state };
-    let workingAccount: AccountJson = deepClone(accountSnapshot) as AccountJson;
-    let touchedAccount = false;
-
-    for (const proposal of opts.proposals) {
-      try {
-        const outcome = applyOne(workingAccount, nextState, proposal);
-        workingAccount = outcome.account;
-        nextState = outcome.state;
-        if (outcome.touchedAccount) {
-          touchedAccount = true;
+      for (const proposal of opts.proposals) {
+        try {
+          const outcome = applyOne(workingAccount, nextState, proposal);
+          workingAccount = outcome.account;
+          nextState = outcome.state;
+          if (outcome.touchedAccount) {
+            touchedAccount = true;
+          }
+          applied.push(proposal.target);
+        } catch (error) {
+          errors[proposal.target] = describeError(error);
         }
-        applied.push(proposal.target);
-      } catch (error) {
-        errors[proposal.target] = describeError(error);
       }
-    }
 
-    const historyEntry: PlanWritebackHistoryEntry = {
-      capturedAt,
-      applied: [...applied],
-      before: { ...before },
-    };
-    const history = Array.isArray(nextState.plan_writeback_history)
-      ? [...nextState.plan_writeback_history]
-      : [];
-    history.push(historyEntry);
-    nextState = { ...nextState, plan_writeback_history: history };
+      const historyEntry: PlanWritebackHistoryEntry = {
+        capturedAt,
+        applied: [...applied],
+        before: { ...before },
+      };
+      const history = Array.isArray(nextState.plan_writeback_history)
+        ? [...nextState.plan_writeback_history]
+        : [];
+      history.push(historyEntry);
+      nextState = { ...nextState, plan_writeback_history: history };
 
-    if (touchedAccount) {
-      nextAccount = workingAccount;
-    }
+      if (touchedAccount) {
+        // Persist account.json first while the state lock is still
+        // held. If this throws, the surrounding withStateLock will
+        // *not* commit the state mutation (that is the rollback —
+        // state.json is left exactly as it was when the lock was
+        // acquired), and we surface the cause to the caller.
+        try {
+          await opts.repo.saveAccount(workingAccount);
+        } catch (error) {
+          errors['__account_persist__'] = describeError(error);
+          // Reset the applied list — nothing reached durable storage.
+          applied.length = 0;
+          throw error;
+        }
+      }
 
-    return { state: nextState, result: undefined };
-  });
-
-  if (nextAccount !== null) {
-    try {
-      await opts.repo.saveAccount(nextAccount);
-    } catch (error) {
-      errors['__account_persist__'] = describeError(error);
-    }
+      return { state: nextState, result: undefined };
+    });
+  } catch {
+    // Error already recorded under errors['__account_persist__'].
+    // The state lock unwind has reverted the in-memory state mutation.
   }
 
   return {

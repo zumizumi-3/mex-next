@@ -11,6 +11,7 @@ import type { ChatInputCommandInteraction } from 'discord.js';
 import type { Logger } from 'pino';
 import type { HandlerContext, HandlersMap } from '../handlers/types.js';
 import { commandToIntent } from './slash-registrar.js';
+import { STATE_EMOJI } from './templates.js';
 
 export interface DispatchSlashOptions {
   interaction: ChatInputCommandInteraction;
@@ -63,18 +64,23 @@ export async function dispatchSlashCommand(opts: DispatchSlashOptions): Promise<
     return;
   }
 
+  // Stamp the slash invoker's Discord id into the handler context so
+  // operator-only handlers can authorize correctly.
+  const requesterUserId = interaction.user?.id ?? null;
+  const ctxForTurn: HandlerContext = {
+    ...handlerContext,
+    requesterUserId,
+  };
+
   await interaction.deferReply();
   try {
-    const result = await handler(handlerContext, args);
+    const result = await handler(ctxForTurn, args);
     await interaction.editReply({ content: result.content });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger?.error(
-      { intentName, error: message },
-      'slash_dispatch_failed',
-    );
+    logger?.error({ intentName, error: message }, 'slash_dispatch_failed');
     try {
-      await interaction.editReply({ content: `❌ 失敗しました: ${message}` });
+      await interaction.editReply({ content: `${STATE_EMOJI.error} 失敗しました: ${message}` });
     } catch {
       // last resort: ignore secondary failure
     }

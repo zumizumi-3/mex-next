@@ -286,6 +286,54 @@ describe('escalateOperator', () => {
     expect(call.content).toContain('stack trace');
   });
 
+  it('mentionMode=all で operator 全員 mention される', async () => {
+    const poster = makePoster();
+    const config = { ...makeConfig(), operatorDiscordUserIds: ['op1', 'op2', 'op3'] };
+    await escalateOperator({
+      reason: 'all-mention',
+      accountId: 'zumi-x',
+      poster,
+      config,
+      repo,
+      mentionMode: 'all',
+    });
+    const call = poster.postEscalation.mock.calls[0][0];
+    expect(call.content).toContain('<@op1>');
+    expect(call.content).toContain('<@op2>');
+    expect(call.content).toContain('<@op3>');
+  });
+
+  it('mentionMode=none では mention を出さず "mention skipped" 文言', async () => {
+    const poster = makePoster();
+    await escalateOperator({
+      reason: 'silent',
+      accountId: 'zumi-x',
+      poster,
+      config: makeConfig(),
+      repo,
+      mentionMode: 'none',
+    });
+    const call = poster.postEscalation.mock.calls[0][0];
+    expect(call.content).toContain('mention skipped');
+    expect(call.content).not.toContain('<@oper-1>');
+  });
+
+  it('mentionMode=first (default) は最初の id のみ mention', async () => {
+    const poster = makePoster();
+    const config = { ...makeConfig(), operatorDiscordUserIds: ['op1', 'op2'] };
+    await escalateOperator({
+      reason: 'first-only',
+      accountId: 'zumi-x',
+      poster,
+      config,
+      repo,
+      mentionMode: 'first',
+    });
+    const call = poster.postEscalation.mock.calls[0][0];
+    expect(call.content).toContain('<@op1>');
+    expect(call.content).not.toContain('<@op2>');
+  });
+
   it('poster が throw すると EscalateDeliveryError を再 throw', async () => {
     const poster: DiscordPoster = {
       postThread: vi.fn(),

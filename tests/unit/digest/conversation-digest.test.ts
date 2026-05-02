@@ -140,7 +140,7 @@ describe('buildDigest — populated', () => {
     expect(digest.scheduledToday[1]?.time).toBe('12:00');
   });
 
-  it('counts pending replies and target actions', async () => {
+  it('counts pending replies and target actions (legacy array shape)', async () => {
     const state: StateJson = {
       ...({
         inbound_reply_sessions: [
@@ -159,6 +159,26 @@ describe('buildDigest — populated', () => {
     const digest = await buildDigest({ repo: repo as never, now: NOW_MAY_2 });
     expect(digest.pendingReplies).toBe(2);
     expect(digest.pendingTargetActions).toBe(2);
+  });
+
+  it('counts pending replies including discord_pending (dict shape)', async () => {
+    // The collector writes a Record<event_id, session> with a `status`
+    // field. open / discord_pending must both count as "未対応" so the
+    // customer sees the true backlog.
+    const state: StateJson = {
+      ...({
+        inbound_reply_sessions: {
+          '100': { event_id: '100', status: 'open' },
+          '101': { event_id: '101', status: 'discord_pending' },
+          '102': { event_id: '102', status: 'posted' },
+          '103': { event_id: '103', status: 'escalated' },
+          '104': { event_id: '104', status: 'error' },
+        },
+      } as StateJson),
+    };
+    const repo = makeRepo({}, state);
+    const digest = await buildDigest({ repo: repo as never, now: NOW_MAY_2 });
+    expect(digest.pendingReplies).toBe(2);
   });
 
   it('selects active hot zone when current time is within range', async () => {

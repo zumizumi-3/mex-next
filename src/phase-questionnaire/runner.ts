@@ -23,6 +23,8 @@ import type { Logger } from 'pino';
 import type { LlmProvider } from '../llm/bridge.js';
 import type { AccountRepo } from '../account-state/repo.js';
 import type { DiscordPoster } from '../posting/collectors/types.js';
+import type { AppConfig } from '../config.js';
+import { escalateOperator } from '../automation/operator-escalation.js';
 import {
   PHASE_QUESTIONS,
   questionsForCadence,
@@ -79,6 +81,13 @@ export interface SubmitPhaseAnswersOptions {
    */
   answers: Record<string, string>;
   logger?: Logger;
+  /**
+   * Optional app config — when provided, synthesize failures escalate
+   * to the operator channel via `escalateOperator` so they can retry.
+   * Tests / lightweight callers can omit this and only see the local
+   * `failed` status update.
+   */
+  config?: AppConfig;
 }
 
 const STATE_KEY = 'phase_questionnaire_sessions';
@@ -310,6 +319,28 @@ export async function submitPhaseAnswers(
   } catch (err) {
     lastError = err instanceof Error ? err.message : String(err);
     opts.logger?.error({ error: lastError }, 'phase_questionnaire_synthesize_failed');
+  }
+
+  // Synthesize failed — escalate to operator so they can retry the
+  // questionnaire run. Best-effort: a delivery failure here is logged
+  // but does not change the persisted session state.
+  if (!synthesis && opts.config) {
+    try {
+      await escalateOperator({
+        reason: `phase_questionnaire synthesize failed (${session.cadence})`,
+        detail: lastError ?? 'unknown error',
+        hint: `/mex phase resubmit ${session.id} で再実行できます。`,
+        accountId: opts.config.accountId,
+        poster: opts.poster,
+        config: opts.config,
+        repo: opts.repo,
+      });
+    } catch (escErr) {
+      opts.logger?.warn(
+        { error: escErr instanceof Error ? escErr.message : String(escErr) },
+        'phase_questionnaire_escalate_failed',
+      );
+    }
   }
 
   // Best-effort operator post

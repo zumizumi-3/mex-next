@@ -47,6 +47,11 @@ export class InMemoryAccountRepo implements AccountRepo {
     this.state = clone(state);
   }
 
+  /** Alias for `saveState` — matches the collector-side contract. */
+  async writeState(state: StateJson): Promise<void> {
+    await this.saveState(state);
+  }
+
   async loadDraftText(contentId: string): Promise<{ text: string; topic: string } | null> {
     const d = this.drafts[contentId];
     if (!d) return null;

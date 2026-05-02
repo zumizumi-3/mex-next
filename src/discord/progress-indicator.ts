@@ -16,7 +16,7 @@
  */
 
 import type { Logger } from 'pino';
-import { PROGRESS_TEMPLATES } from './templates.js';
+import { DISCORD_MESSAGE_SOFT_LIMIT, PROGRESS_TEMPLATES, truncateForDiscord } from './templates.js';
 
 /**
  * Minimal contract we need from a Discord message we sent.
@@ -85,7 +85,7 @@ export function createProgressIndicator(
       return;
     }
     try {
-      await message.edit(content);
+      await message.edit(truncateForDiscord(content, DISCORD_MESSAGE_SOFT_LIMIT));
     } catch (error) {
       log?.warn(
         { error: error instanceof Error ? error.message : String(error) },

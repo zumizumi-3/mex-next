@@ -20,6 +20,35 @@ import type {
 } from '../posting/collectors/types.js';
 import { shouldEscalate } from './escalation-state.js';
 
+/**
+ * How many operator IDs we mention in the escalation body.
+ *
+ * - `first` (default): mention only `operatorIds[0]` — Python era behaviour.
+ *   Keeps notification noise minimal when only one operator owns the account.
+ * - `all`: mention every id in `operatorDiscordUserIds`. Useful when a
+ *   team rotation owns the account and any of them should respond.
+ * - `none`: do not mention anyone. Falls back to the
+ *   "operator_discord_id 未設定 — mention skipped" wording so the
+ *   message still posts visibly into the operator channel without
+ *   triggering a push.
+ *
+ * Selected via `MEX_OPERATOR_MENTION_MODE` env var; the per-call
+ * `mentionMode` option overrides the env when supplied.
+ */
+export type OperatorMentionMode = 'first' | 'all' | 'none';
+
+export const DEFAULT_OPERATOR_MENTION_MODE: OperatorMentionMode = 'first';
+
+export function resolveMentionMode(
+  env: NodeJS.ProcessEnv,
+  override?: OperatorMentionMode,
+): OperatorMentionMode {
+  if (override) return override;
+  const raw = (env.MEX_OPERATOR_MENTION_MODE ?? '').trim().toLowerCase();
+  if (raw === 'first' || raw === 'all' || raw === 'none') return raw;
+  return DEFAULT_OPERATOR_MENTION_MODE;
+}
+
 export interface EscalateOpts {
   /** 短い理由 (dedup key にも使う)。 */
   readonly reason: string;
@@ -36,6 +65,11 @@ export interface EscalateOpts {
   readonly windowMinutes?: number;
   /** Inject "now" for tests. */
   readonly now?: () => Date;
+  /**
+   * Override the global mention-mode env var for this single call.
+   * Tests use this to assert behaviour without touching `process.env`.
+   */
+  readonly mentionMode?: OperatorMentionMode;
 }
 
 export interface EscalateResult {
@@ -67,13 +101,14 @@ export async function escalateOperator(opts: EscalateOpts): Promise<EscalateResu
     return { emitted: false, skipped: true, failCount };
   }
 
+  const mentionMode = resolveMentionMode(process.env, opts.mentionMode);
   const content = buildContent({
     reason: opts.reason,
     detail: opts.detail,
     hint: opts.hint,
     accountId: opts.accountId,
     failCount,
-    operatorMention: pickMention(opts.config.operatorDiscordUserIds),
+    operatorMention: pickMention(opts.config.operatorDiscordUserIds, mentionMode),
   });
 
   let result: DiscordPostThreadResult;
@@ -136,10 +171,18 @@ function buildContent(input: BuildContentInput): string {
   return lines.join('\n');
 }
 
-function pickMention(operatorIds: readonly string[]): string {
-  const first = operatorIds[0]?.trim();
-  if (!first) return '';
-  return `<@${first}>`;
+function pickMention(
+  operatorIds: readonly string[],
+  mode: OperatorMentionMode,
+): string {
+  if (mode === 'none') return '';
+  const cleaned = operatorIds.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (cleaned.length === 0) return '';
+  if (mode === 'all') {
+    return cleaned.map((id) => `<@${id}>`).join(' ');
+  }
+  // 'first' (default).
+  return `<@${cleaned[0]}>`;
 }
 
 function truncate(text: string, limit: number): string {

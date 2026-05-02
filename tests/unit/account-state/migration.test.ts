@@ -68,6 +68,59 @@ describe('migrateState', () => {
     expect(value.posting_sessions).toEqual([]);
   });
 
+  it('inbound_reply_sessions / inbound_reaction_sessions は dict として round-trip', () => {
+    const dictInput = {
+      inbound_reply_sessions: {
+        '100': {
+          event_id: '100',
+          tweet_id: '100',
+          author_handle: 'alice',
+          status: 'posted',
+        },
+      },
+      inbound_reaction_sessions: {
+        '200': {
+          event_id: '200',
+          source_tweet_id: 's1',
+          status: 'posted',
+        },
+      },
+    };
+    const { value } = migrateState(dictInput);
+    expect(Array.isArray(value.inbound_reply_sessions)).toBe(false);
+    expect(Array.isArray(value.inbound_reaction_sessions)).toBe(false);
+    const replies = value.inbound_reply_sessions as Record<string, { status: string }>;
+    expect(replies['100']?.status).toBe('posted');
+    const reacts = value.inbound_reaction_sessions as Record<string, { status: string }>;
+    expect(reacts['200']?.status).toBe('posted');
+  });
+
+  it('legacy array<session> shape の inbound_reply_sessions を dict に変換', () => {
+    const arrayInput = {
+      inbound_reply_sessions: [
+        { event_id: '500', tweet_id: '500', status: 'posted' },
+        { event_id: '501', tweet_id: '501', status: 'open' },
+      ],
+      inbound_reaction_sessions: [
+        { event_id: '600', source_tweet_id: 's', status: 'posted' },
+      ],
+    };
+    const { value, changes } = migrateState(arrayInput);
+    const replies = value.inbound_reply_sessions as Record<string, { status: string }>;
+    expect(replies['500']?.status).toBe('posted');
+    expect(replies['501']?.status).toBe('open');
+    const reacts = value.inbound_reaction_sessions as Record<string, { status: string }>;
+    expect(reacts['600']?.status).toBe('posted');
+    expect(
+      changes.some((c) => c.startsWith('inbound_reply_sessions: array→dict')),
+    ).toBe(true);
+    expect(
+      changes.some((c) =>
+        c.startsWith('inbound_reaction_sessions: array→dict'),
+      ),
+    ).toBe(true);
+  });
+
   it('passthrough で未知 field を保持', () => {
     const { value } = migrateState({
       account_id: 'x',

@@ -338,7 +338,10 @@ async function writeSession(
   const state = await repo.loadState();
   const map = { ...readSessionMap(state[TARGET_SESSION_KEY]) };
   map[session.event_id] = session;
-  await repo.saveState({ ...state, [TARGET_SESSION_KEY]: map });
+  // Use `writeState` (collector convention) so every state mutation in
+  // this module flows through one entry point. Repo implementations
+  // expose `writeState` as an alias for `saveState`.
+  await repo.writeState({ ...state, [TARGET_SESSION_KEY]: map });
 }
 
 function readSessionMap(value: unknown): Record<string, TargetDiscoverySession> {

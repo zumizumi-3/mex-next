@@ -145,9 +145,79 @@ async function resolveTopics(opts: {
   }
 
   if (topics.length === 0) {
-    topics = fallbackTopics(opts.count);
+    // Prefer derivation from the account's own brand / active_window —
+    // those signals are usually enough to anchor diverse topics. Only
+    // fall through to the static placeholders if we end up with
+    // nothing meaningful.
+    const derived = extractTopicsFromAccount({
+      accountObj,
+      activeWindow,
+      brand,
+      count: opts.count,
+    });
+    topics = derived.length > 0 ? derived : fallbackTopics(opts.count);
   }
   return topics.slice(0, opts.count);
+}
+
+/**
+ * Derive seed topic anchors from the account's own brand / active
+ * window content. Used when the LLM topic call fails so we don't fall
+ * straight through to anonymous static placeholders.
+ *
+ * The shape of brand / active_window varies by deployment — we look at
+ * a small set of well-known fields and keep anything that looks like a
+ * short Japanese topic anchor (12–60 chars, deduped).
+ */
+export function extractTopicsFromAccount(input: {
+  accountObj: Record<string, unknown>;
+  activeWindow: unknown;
+  brand: unknown;
+  count: number;
+}): string[] {
+  const out: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value !== 'string') return;
+    const cleaned = value.trim();
+    if (cleaned.length === 0) return;
+    if (cleaned.length > 80) return;
+    if (out.includes(cleaned)) return;
+    out.push(cleaned);
+  };
+
+  const aw = (input.activeWindow ?? {}) as Record<string, unknown>;
+  // active_window-style fields: theme, focus, anchor, hypothesis, topics[]
+  push(aw.theme);
+  push(aw.focus);
+  push(aw.anchor);
+  push(aw.hypothesis);
+  if (Array.isArray(aw.topics)) {
+    for (const t of aw.topics) push(t);
+  }
+  if (Array.isArray(aw.angles)) {
+    for (const t of aw.angles) push(t);
+  }
+
+  const brandObj = (input.brand ?? {}) as Record<string, unknown>;
+  // brand-style fields: positioning, value_props[], pillars[], expertise
+  push(brandObj.positioning);
+  push(brandObj.expertise);
+  push(brandObj.tagline);
+  if (Array.isArray(brandObj.value_props)) {
+    for (const t of brandObj.value_props) push(t);
+  }
+  if (Array.isArray(brandObj.pillars)) {
+    for (const t of brandObj.pillars) push(t);
+  }
+  if (Array.isArray(brandObj.themes)) {
+    for (const t of brandObj.themes) push(t);
+  }
+
+  // Top-level account fields: display_name biography style hints.
+  push(input.accountObj.bio);
+  push(input.accountObj.display_name);
+
+  return out.slice(0, input.count);
 }
 
 function parseTopicsJson(raw: string, count: number): string[] {

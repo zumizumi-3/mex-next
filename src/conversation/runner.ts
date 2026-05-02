@@ -27,12 +27,53 @@ import type { HandlerContext, HandlersMap, HandlerArgs } from '../handlers/types
 import type { LlmProvider } from '../llm/bridge.js';
 import { OnboardingCollector } from '../onboarding/collector.js';
 import { applyFreeFormAnswer } from '../handlers/onboarding.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 export interface IntentDrivenRunnerOptions {
   bridge: LlmProvider;
   handlers: HandlersMap;
   handlerContext: HandlerContext;
 }
+
+/**
+ * Onboarding-bypass keyword sets.
+ *
+ * When an onboarding session is active we normally treat the customer's
+ * raw text as the answer to the current question. These words break out
+ * of that mode so the customer can either cancel the wizard or check
+ * progress without their reply being recorded as an answer.
+ *
+ * Casing rules:
+ *   - Japanese entries are matched as-is (case is irrelevant in JP).
+ *   - English entries live in `*_LOWER` and are compared after
+ *     `userText.toLowerCase()`.
+ */
+export const ONBOARDING_CANCEL_KEYWORDS: ReadonlySet<string> = new Set([
+  'やめる',
+  '中止',
+  'オンボーディング中止',
+  'オンボやめる',
+  'やめたい',
+  '終わる',
+  '終わりたい',
+  'ストップ',
+]);
+
+export const ONBOARDING_CANCEL_KEYWORDS_LOWER: ReadonlySet<string> = new Set(['cancel', 'stop']);
+
+export const ONBOARDING_STATUS_KEYWORDS: ReadonlySet<string> = new Set([
+  '状態',
+  '進捗',
+  '今どこ',
+  '今どこまで',
+  'いまどこ',
+  'いまどこまで',
+  'どこまで進んだ',
+  'いまの状況',
+  'やり直し',
+]);
+
+export const ONBOARDING_STATUS_KEYWORDS_LOWER: ReadonlySet<string> = new Set(['status']);
 
 export class IntentDrivenRunner implements ConversationRunner {
   private readonly bridge: LlmProvider;
@@ -59,6 +100,15 @@ export class IntentDrivenRunner implements ConversationRunner {
     }
     await safeStatus(onStatus, '🧭 意図を解釈中…');
 
+    // Per-turn handler context: clone the static context but stamp in
+    // the actual requester's Discord user id so operator-only handlers
+    // can authorize correctly. Falsy author ids fall through as null.
+    const requesterUserId = message.author?.id ?? null;
+    const turnHandlerContext: HandlerContext = {
+      ...this.handlerContext,
+      requesterUserId,
+    };
+
     const userText = message.content.trim();
     if (!userText) {
       return { output: '何か書いてください。' };
@@ -69,27 +119,19 @@ export class IntentDrivenRunner implements ConversationRunner {
     // instead of running the intent classifier.
     try {
       const collector = new OnboardingCollector({
-        repo: this.handlerContext.repo,
+        repo: turnHandlerContext.repo,
         bridge: this.bridge,
-        logger: this.handlerContext.logger,
+        logger: turnHandlerContext.logger,
       });
       const active = await collector.getActive();
       if (active) {
         const lower = userText.toLowerCase();
         const wantsCancel =
-          userText === 'やめる' ||
-          userText === '中止' ||
-          lower === 'cancel' ||
-          userText === 'オンボーディング中止' ||
-          userText === 'オンボやめる';
+          ONBOARDING_CANCEL_KEYWORDS.has(userText) || ONBOARDING_CANCEL_KEYWORDS_LOWER.has(lower);
         const wantsStatus =
-          userText === '状態' ||
-          userText === '進捗' ||
-          lower === 'status' ||
-          userText === '今どこ' ||
-          userText === '今どこまで';
+          ONBOARDING_STATUS_KEYWORDS.has(userText) || ONBOARDING_STATUS_KEYWORDS_LOWER.has(lower);
         if (!wantsCancel && !wantsStatus) {
-          const reply = await applyFreeFormAnswer(this.handlerContext, active, userText);
+          const reply = await applyFreeFormAnswer(turnHandlerContext, active, userText);
           return {
             output: reply,
             metadata: {
@@ -101,14 +143,14 @@ export class IntentDrivenRunner implements ConversationRunner {
         }
       }
     } catch (error) {
-      this.handlerContext.logger.warn?.(
+      turnHandlerContext.logger.warn?.(
         { error: error instanceof Error ? error.message : String(error) },
         'onboarding_bypass_failed',
       );
     }
 
-    const judgmentEvents = this.handlerContext.judgmentEvents;
-    const accountId = this.handlerContext.accountId;
+    const judgmentEvents = turnHandlerContext.judgmentEvents;
+    const accountId = turnHandlerContext.accountId;
     const intent: IntentResult = await classifyIntent({
       userText,
       bridge: this.bridge,
@@ -144,14 +186,21 @@ export class IntentDrivenRunner implements ConversationRunner {
       };
     }
 
-    return this.dispatch(intent, onStatus);
+    return this.dispatch(intent, onStatus, turnHandlerContext);
   }
 
   /**
    * Dispatch a non-confirmation-required intent to its handler.
    * Public so slash command / interaction routes can re-use it.
+   *
+   * If `ctxOverride` is provided, the handler is invoked against that
+   * context (used by `run` to stamp in per-turn `requesterUserId`).
    */
-  async dispatch(intent: IntentResult, onStatus?: StatusCallback): Promise<TurnResult> {
+  async dispatch(
+    intent: IntentResult,
+    onStatus?: StatusCallback,
+    ctxOverride?: HandlerContext,
+  ): Promise<TurnResult> {
     await safeStatus(onStatus, '⚙️ 実行中…');
     const handler = this.handlers[intent.intent] ?? this.handlers['unknown'];
     if (!handler) {
@@ -162,7 +211,7 @@ export class IntentDrivenRunner implements ConversationRunner {
         ? { ...(intent.args ?? {}), userMessage: intent.userMessage ?? '' }
         : intent.args;
     try {
-      const result = await handler(this.handlerContext, args);
+      const result = await handler(ctxOverride ?? this.handlerContext, args);
       return {
         output: result.content,
         ...(result.silent ? { suppressReply: true } : {}),
@@ -171,7 +220,7 @@ export class IntentDrivenRunner implements ConversationRunner {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       return {
-        output: `❌ 実行に失敗しました: ${detail}`,
+        output: `${STATE_EMOJI.error} 実行に失敗しました: ${detail}`,
         metadata: { intent: intent.intent, error: detail },
       };
     }
@@ -186,4 +235,3 @@ async function safeStatus(cb: StatusCallback | undefined, status: string): Promi
     // status callbacks are advisory; ignore their failures
   }
 }
-

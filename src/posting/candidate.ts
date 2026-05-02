@@ -17,12 +17,18 @@
 
 import type { AccountJson } from './types.js';
 import type { QualityResult } from './quality-judge.js';
+import { textPrefix as dedupTextPrefix, PREFIX_LENGTH } from './dedup.js';
 
 /** Maximum tweet length (X enforced limit). */
 export const MAX_TWEET_LENGTH = 280;
 
-/** Length used for `too_similar_recent` prefix-equality dedup. Python parity: 80. */
-export const PREFIX_DEDUP_LEN = 80;
+/**
+ * Length used for `too_similar_recent` prefix-equality dedup. Python parity: 80.
+ *
+ * Re-exported from `dedup.PREFIX_LENGTH` so there is exactly one source
+ * of truth for the dedup signature length across the posting subsystem.
+ */
+export const PREFIX_DEDUP_LEN = PREFIX_LENGTH;
 
 /**
  * Phrases that signal a template / fallback / placeholder draft. If
@@ -77,6 +83,14 @@ export interface Candidate {
   validateResult?: ValidateResult;
   computedDiff?: unknown;
   status: CandidateStatus;
+  /**
+   * How many times this candidate's lineage has bounced through the
+   * `repairing` → re-generate cycle. Incremented exclusively in the
+   * state machine when generating a *replacement* for a previously
+   * repairing candidate. Capped at REPAIR_MAX_ATTEMPTS to break
+   * infinite loops on persistently-bad LLM output.
+   */
+  repairAttemptCount?: number;
   /** Free-form metadata (e.g. revision history). */
   meta?: Record<string, unknown>;
 }
@@ -104,10 +118,15 @@ export interface ValidateContextIndex {
   account?: AccountJson;
 }
 
-/** Compress whitespace + strip head, then take first N chars. */
+/**
+ * Compress whitespace + strip head, then take first N chars.
+ *
+ * Thin wrapper around `dedup.textPrefix` so the dedup signature length
+ * and normalization rule have a single home. Local helper kept for
+ * readability of `validateCandidate` below.
+ */
 function textPrefix(text: string, length: number = PREFIX_DEDUP_LEN): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.slice(0, length);
+  return dedupTextPrefix(text, length);
 }
 
 /**

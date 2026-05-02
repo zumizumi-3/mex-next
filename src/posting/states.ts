@@ -62,7 +62,7 @@ export const VALID_TRANSITIONS: Readonly<Record<PostingState, readonly PostingSt
   indexing_context: ['generating', 'failed_terminal'],
   generating: ['validating', 'repairing', 'failed_terminal'],
   validating: ['awaiting_decision', 'repairing', 'failed_terminal'],
-  repairing: ['validating', 'awaiting_decision', 'failed_terminal'],
+  repairing: ['generating', 'validating', 'awaiting_decision', 'failed_terminal'],
   awaiting_decision: ['revising', 'scheduled', 'failed_terminal', 'expired'],
   revising: ['validating', 'awaiting_decision', 'failed_terminal'],
   scheduled: ['published', 'failed_terminal', 'expired'],
@@ -102,3 +102,15 @@ export function isActive(state: PostingState): boolean {
  * Default session TTL in hours (Python parity: DEFAULT_SESSION_TTL_HOURS = 24).
  */
 export const DEFAULT_SESSION_TTL_HOURS = 24;
+
+/**
+ * Maximum number of times the state machine will bounce a session
+ * through the `repairing → generating → validating` loop before
+ * forcing the session into `failed_terminal`.
+ *
+ * Each call to `generateCandidate()` from a `repairing` state counts
+ * as one attempt; once the new candidate's `repairAttemptCount` reaches
+ * this cap, the next failure is terminal. Set to 2 to match the cap
+ * documented in `quality-judge.ts` ("at most 2 retries").
+ */
+export const REPAIR_MAX_ATTEMPTS = 2;

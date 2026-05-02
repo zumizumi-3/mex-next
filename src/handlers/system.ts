@@ -7,16 +7,30 @@
 
 import { execa } from 'execa';
 import type { HandlerContext, HandlerResult, HandlerArgs } from './types.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 const SELF_UPDATE_UNIT = 'mex-self-update.service';
 
-function isOperator(ctx: HandlerContext): boolean {
-  // The intent-driven runner doesn't currently propagate the
-  // requester's user-id into the handler context. As a safe default,
-  // require operatorDiscordUserIds to be configured AND non-empty —
-  // i.e. operators are explicitly configured. Without that we refuse
-  // the update.
-  return (ctx.operatorDiscordUserIds?.length ?? 0) > 0;
+/**
+ * Operator gate. Returns true iff the requester's Discord user id is
+ * present in the configured operator allowlist.
+ *
+ * - Empty allowlist = no operator powers (refuse).
+ * - Missing requesterUserId (e.g. unauthenticated path) = refuse.
+ *
+ * Exported so other operator-only handlers (e.g. automation enable-all)
+ * can apply the same check.
+ */
+export function isOperator(ctx: HandlerContext): boolean {
+  const allowlist = ctx.operatorDiscordUserIds ?? [];
+  if (allowlist.length === 0) {
+    return false;
+  }
+  const requester = ctx.requesterUserId;
+  if (!requester) {
+    return false;
+  }
+  return allowlist.includes(requester);
 }
 
 export async function handleSystemUpdate(
@@ -25,8 +39,7 @@ export async function handleSystemUpdate(
 ): Promise<HandlerResult> {
   if (!isOperator(ctx)) {
     return {
-      content:
-        '⚠️ 自己更新は operator 専用機能です。OPERATOR_DISCORD_USER_IDS が設定された環境で実行してください。',
+      content: `${STATE_EMOJI.attention} 自己更新は operator 専用機能です。OPERATOR_DISCORD_USER_IDS に登録された Discord アカウントから実行してください。`,
       tag: 'system.update.unauthorized',
     };
   }
@@ -52,7 +65,7 @@ export async function handleSystemUpdate(
     const message = error instanceof Error ? error.message : String(error);
     ctx.logger.error({ error: message }, 'self_update_trigger_failed');
     return {
-      content: `❌ 自己更新の起動に失敗しました: \`${message}\`\nVPS で \`sudo systemctl start mex-self-update.service\` を直接実行してください。`,
+      content: `${STATE_EMOJI.error} 自己更新の起動に失敗しました: \`${message}\`\nVPS で \`sudo systemctl start mex-self-update.service\` を直接実行してください。`,
       tag: 'system.update.failed',
     };
   }

@@ -2,7 +2,11 @@
 # self-update.sh — git pull + build + restart bot
 #
 # `mex-self-update.service` の ExecStart から呼ばれる。
-# 失敗時は restart せず log だけ残す (best effort で operator alert)。
+# 失敗時の挙動:
+#   - build までの step は失敗で alert + exit 1
+#   - bot restart 失敗時は **1 回だけ** `systemctl start --no-block` で
+#     再起動を試みる。それも失敗したら alert + exit 1。
+#     (一過性の dbus / unit hang を 1 回 retry で吸収する想定)
 
 set -uo pipefail
 
@@ -13,7 +17,10 @@ BOT_SERVICE="${BOT_SERVICE:-mex-bot.service}"
 log() { echo "[$(date -Iseconds)] [self-update] $*"; }
 err() { echo "[$(date -Iseconds)] [self-update] [ERROR] $*" >&2; }
 
-alert_operator() {
+# Operator alert helper. NOOP when OPERATOR_DISCORD_WEBHOOK is unset.
+# Errors from curl are swallowed — we don't want the alert path itself
+# to mask the original failure.
+send_alert() {
     local message="$1"
     if [ -n "${OPERATOR_DISCORD_WEBHOOK:-}" ]; then
         curl -sS -X POST "${OPERATOR_DISCORD_WEBHOOK}" \
@@ -23,14 +30,37 @@ alert_operator() {
     fi
 }
 
+# Backwards-compat alias — older versions called this `alert_operator`.
+alert_operator() { send_alert "$@"; }
+
 run_step() {
     local label="$1"; shift
     log "step: ${label}"
     if ! "$@"; then
         err "${label} 失敗 (rc=$?)"
-        alert_operator "${label} 失敗"
+        send_alert "${label} 失敗"
         return 1
     fi
+}
+
+# Restart the bot service with a single fallback attempt.
+#
+# Returns 0 on success (either initial restart or fallback start).
+# Returns 1 if both attempts fail. The caller emits the operator
+# alert with the combined context.
+restart_bot_with_fallback() {
+    if systemctl restart "${BOT_SERVICE}"; then
+        log "${BOT_SERVICE} restart OK"
+        return 0
+    fi
+    err "${BOT_SERVICE} restart failed — attempting fallback start"
+    log "step: systemctl start --no-block ${BOT_SERVICE}"
+    if systemctl start --no-block "${BOT_SERVICE}"; then
+        log "${BOT_SERVICE} fallback start dispatched"
+        return 0
+    fi
+    err "${BOT_SERVICE} fallback start also failed"
+    return 1
 }
 
 main() {
@@ -38,7 +68,7 @@ main() {
 
     if [ ! -d "${MEX_NEXT_DIR}/.git" ]; then
         err "${MEX_NEXT_DIR} is not a git repo, abort"
-        alert_operator "${MEX_NEXT_DIR} is not a git repo"
+        send_alert "${MEX_NEXT_DIR} is not a git repo"
         exit 1
     fi
 
@@ -50,13 +80,15 @@ main() {
     run_step "npm run build" npm run build                   || exit 1
 
     log "build OK -> restart ${BOT_SERVICE}"
-    if ! systemctl restart "${BOT_SERVICE}"; then
-        err "${BOT_SERVICE} restart failed"
-        alert_operator "${BOT_SERVICE} restart failed"
+    if ! restart_bot_with_fallback; then
+        send_alert "${BOT_SERVICE} restart + fallback start both failed"
         exit 1
     fi
 
     log "self-update done"
 }
 
-main "$@"
+# When sourced (e.g. by tests), expose helpers without running main.
+if [ "${BASH_SOURCE[0]:-$0}" = "${0}" ]; then
+    main "$@"
+fi

@@ -32,6 +32,7 @@ import { targetPhase2Buttons } from '../posting/collectors/target-discovery.js';
 import type { LlmProviderLike } from '../posting/collectors/types.js';
 import type { XApiSurface } from '../x-api/types.js';
 import type { AccountRepo } from '../account-state/types.js';
+import { STATE_EMOJI } from './templates.js';
 
 export type TargetButtonAction =
   | 'like'
@@ -91,6 +92,13 @@ export interface DispatchResult {
  *
  * The wiring code at `src/main.ts` registers this under the
  * `target` prefix via the InteractionRouter.
+ *
+ * IMPORTANT — 3 second deferral.
+ * Discord rejects an interaction reply that arrives more than 3 seconds
+ * after the press. Quote / reply suggest paths run an LLM round so we
+ * call `deferReply()` immediately and then resolve via `editReply`.
+ * Lightweight paths (`like`, `skip`, modal-edit ack) also defer for
+ * uniformity — it's cheap and removes the timing footgun.
  */
 export async function dispatchTargetButton(
   interaction: ButtonInteraction,
@@ -106,10 +114,19 @@ export async function dispatchTargetButton(
     sessionId: parsed.sessionId,
   });
 
+  // Defer ASAP so the LLM/X API rounds below never trip the 3s limit.
+  // Suggest paths render to the channel (visible to the room); the rest
+  // are operator-only acknowledgements (ephemeral).
+  const isSuggest = parsed.action === 'quote-suggest' || parsed.action === 'reply-suggest';
+  await safeDeferReply(interaction, { ephemeral: !isSuggest, log });
+
   try {
     if (parsed.action === 'like') {
       if (!deps.xApi) {
-        await replyEphemeral(interaction, '⚠️ X API が未設定のため、いいねできません。');
+        await respond(
+          interaction,
+          `${STATE_EMOJI.attention} X API が未設定のため、いいねできません。`,
+        );
         return { handled: true, message: 'no_xapi' };
       }
       await handleTargetLike({
@@ -117,36 +134,30 @@ export async function dispatchTargetButton(
         xApi: deps.xApi,
         sessionId: parsed.sessionId,
       });
-      await replyEphemeral(interaction, '👍 いいねしました。');
+      await respond(interaction, '👍 いいねしました。');
       return { handled: true, message: 'liked' };
     }
 
     if (parsed.action === 'skip') {
       await handleTargetSkip({ repo: deps.repo, sessionId: parsed.sessionId });
-      await replyEphemeral(interaction, '⏭ 見送りに記録しました。');
+      await respond(interaction, '⏭ 見送りに記録しました。');
       return { handled: true, message: 'skipped' };
     }
 
     if (parsed.action === 'quote-suggest' || parsed.action === 'reply-suggest') {
       const mode = parsed.action === 'quote-suggest' ? 'quote' : 'reply';
-      const suggestFn =
-        mode === 'quote' ? handleTargetQuoteSuggest : handleTargetReplySuggest;
+      const suggestFn = mode === 'quote' ? handleTargetQuoteSuggest : handleTargetReplySuggest;
       const result = await suggestFn({
         repo: deps.repo,
         bridge: deps.bridge,
         sessionId: parsed.sessionId,
       });
       const label = mode === 'quote' ? '引用文' : '返信文';
-      const lines = [
-        `📝 ${label} の提案:`,
-        '',
-        result.text,
-      ];
+      const lines = [`📝 ${label} の提案:`, '', result.text];
       if (result.rationale) {
         lines.push('', `_理由: ${result.rationale}_`);
       }
-      await interaction.reply({
-        content: lines.join('\n'),
+      await respond(interaction, lines.join('\n'), {
         components: targetPhase2Buttons(mode, parsed.sessionId) as never,
       });
       return { handled: true, message: `${mode}_suggested` };
@@ -156,29 +167,25 @@ export async function dispatchTargetButton(
       const mode = parsed.action === 'quote-schedule' ? 'quote' : 'reply';
       const text = extractMessageBodyForSchedule(interaction);
       if (!text) {
-        await replyEphemeral(interaction, '⚠️ 提案テキストを抽出できませんでした。');
+        await respond(interaction, `${STATE_EMOJI.attention} 提案テキストを抽出できませんでした。`);
         return { handled: true, message: 'no_text' };
       }
-      const scheduleFn =
-        mode === 'quote' ? handleTargetQuoteSchedule : handleTargetReplySchedule;
+      const scheduleFn = mode === 'quote' ? handleTargetQuoteSchedule : handleTargetReplySchedule;
       const result = await scheduleFn({
         repo: deps.repo,
         sessionId: parsed.sessionId,
         text,
       });
-      await replyEphemeral(
+      await respond(
         interaction,
-        `✅ ${mode === 'quote' ? '引用' : '返信'} を予約しました (publish_id: ${result.publishId}).`,
+        `${STATE_EMOJI.ok} ${mode === 'quote' ? '引用' : '返信'} を予約しました (publish_id: ${result.publishId}).`,
       );
       return { handled: true, message: `${mode}_scheduled` };
     }
 
     if (parsed.action === 'quote-edit' || parsed.action === 'reply-edit') {
       // Modal-based editing is wired separately; we just acknowledge here.
-      await replyEphemeral(
-        interaction,
-        '✏️ 修正は別チャンネルの編集モーダルで受け付けます。',
-      );
+      await respond(interaction, '✏️ 修正は別チャンネルの編集モーダルで受け付けます。');
       return { handled: true, message: 'edit_ack' };
     }
 
@@ -191,7 +198,7 @@ export async function dispatchTargetButton(
           ? error.message
           : String(error);
     log?.warn({ error: detail }, 'target_button_failed');
-    await replyEphemeral(interaction, `❌ 失敗しました: ${detail}`);
+    await respond(interaction, `${STATE_EMOJI.error} 失敗しました: ${detail}`);
     return { handled: true, message: 'error' };
   }
 }
@@ -221,13 +228,52 @@ function extractMessageBodyForSchedule(interaction: ButtonInteraction): string {
   return body;
 }
 
-async function replyEphemeral(
+interface RespondOptions {
+  /** Optional message components (button rows). Loosely typed because
+   *  discord.js builders feed straight into `reply`/`editReply`. */
+  readonly components?: unknown;
+}
+
+/**
+ * Defer the interaction without throwing if discord.js rejects (e.g.
+ * the interaction was already acknowledged by an outer router, or the
+ * 3s window already lapsed). We still try to respond afterwards so the
+ * customer sees feedback either way.
+ */
+async function safeDeferReply(
+  interaction: ButtonInteraction,
+  opts: { ephemeral: boolean; log?: Logger },
+): Promise<void> {
+  if (interaction.deferred || interaction.replied) return;
+  try {
+    await interaction.deferReply({ ephemeral: opts.ephemeral });
+  } catch (error) {
+    opts.log?.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'target_button_defer_failed',
+    );
+  }
+}
+
+/**
+ * Send a response to the interaction. If we deferred (the common case),
+ * we land via `editReply`; otherwise we fall back to `reply` /
+ * `followUp` so the message still surfaces.
+ */
+async function respond(
   interaction: ButtonInteraction,
   content: string,
+  opts: RespondOptions = {},
 ): Promise<void> {
-  if (interaction.replied || interaction.deferred) {
-    await interaction.followUp({ content, ephemeral: true });
+  const payload: Record<string, unknown> = { content };
+  if (opts.components) payload['components'] = opts.components;
+  if (interaction.deferred) {
+    await interaction.editReply(payload as never);
     return;
   }
-  await interaction.reply({ content, ephemeral: true });
+  if (interaction.replied) {
+    await interaction.followUp({ ...payload, ephemeral: true } as never);
+    return;
+  }
+  await interaction.reply({ ...payload, ephemeral: true } as never);
 }

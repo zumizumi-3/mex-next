@@ -109,6 +109,31 @@ describe('judgeQuality', () => {
     expect(result.scores.every((s) => s.score === 0)).toBe(true);
   });
 
+  it('marks retryable=true when bridge throws (transient transport error)', async () => {
+    const bridge: LlmProvider = {
+      generate: vi.fn(async () => {
+        throw new Error('ECONNRESET');
+      }),
+    };
+    const result = await judgeQuality({ candidateText: 't', account: ACCOUNT, bridge });
+    expect(result.pass).toBe(false);
+    expect(result.retryable).toBe(true);
+  });
+
+  it('marks retryable=false when JSON parse fails (schema-level failure)', async () => {
+    // Pure prose response with no `{...}` block at all → unparseable.
+    const bridge = mockBridge('judge declined to score');
+    const result = await judgeQuality({ candidateText: 't', account: ACCOUNT, bridge });
+    expect(result.retryable).toBe(false);
+  });
+
+  it('omits retryable on a normal pass (only set on failures)', async () => {
+    const bridge = mockBridge(judgeResponse({}));
+    const result = await judgeQuality({ candidateText: 't', account: ACCOUNT, bridge });
+    expect(result.pass).toBe(true);
+    expect(result.retryable).toBeUndefined();
+  });
+
   it('falls back to threshold for missing scores (still fails since others are missing too)', async () => {
     const bridge = mockBridge(JSON.stringify({ scores: {} }));
     const result = await judgeQuality({ candidateText: 't', account: ACCOUNT, bridge });

@@ -7,9 +7,15 @@
  *
  * `withState` は Python 版の `state lock + load + apply + dump_json` の
  * pattern を transaction として 1 メソッドに集約する。
+ *
+ * ## Path traversal guard
+ *
+ * すべての externally-supplied identifier (`contentId`) は
+ * `assertSafeId` を通って fs.* 呼出に届く。`..` / `/` / `\` / NUL を
+ * 含むものは `InvalidContentIdError` で reject される。
  */
 
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promises as fs } from 'node:fs';
 import {
   readJson,
@@ -24,6 +30,82 @@ import {
   migrateState,
   type MigrationResult,
 } from './schema-migration.js';
+
+/**
+ * Identifier whitelist. Allowed: ASCII letters, digits, underscore, hyphen.
+ * The first character must be a letter, digit, or underscore so paths cannot
+ * begin with a hyphen (which CLI tools may interpret as a flag).
+ */
+const SAFE_ID_PATTERN = /^[a-z0-9_][a-z0-9_-]*$/i;
+const MAX_ID_LENGTH = 128;
+
+export class InvalidContentIdError extends Error {
+  readonly contentId: string;
+  constructor(contentId: string, reason: string) {
+    super(`invalid content_id: ${reason}`);
+    this.name = 'InvalidContentIdError';
+    this.contentId = contentId;
+  }
+}
+
+/**
+ * Validate an externally-supplied identifier for filesystem safety.
+ *
+ * Rejects:
+ *   - empty / non-string
+ *   - any string containing `..`, `/`, `\`, NUL, or whitespace
+ *   - anything not matching {@link SAFE_ID_PATTERN}
+ *   - lengths beyond {@link MAX_ID_LENGTH}
+ *
+ * This is exported so other modules (queue, schedule_ops) can apply the
+ * same guard to `publish_id` / similar identifiers.
+ */
+export function assertSafeId(value: unknown, kind = 'content_id'): string {
+  if (typeof value !== 'string') {
+    throw new InvalidContentIdError(String(value), `${kind} must be a string`);
+  }
+  if (value.length === 0) {
+    throw new InvalidContentIdError(value, `${kind} must not be empty`);
+  }
+  if (value.length > MAX_ID_LENGTH) {
+    throw new InvalidContentIdError(value, `${kind} exceeds ${MAX_ID_LENGTH} chars`);
+  }
+  if (
+    value.includes('..') ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes('\0')
+  ) {
+    throw new InvalidContentIdError(value, `${kind} contains forbidden characters`);
+  }
+  if (!SAFE_ID_PATTERN.test(value)) {
+    throw new InvalidContentIdError(value, `${kind} must match ${SAFE_ID_PATTERN}`);
+  }
+  return value;
+}
+
+/**
+ * Final defense-in-depth check: assert that a resolved fs path remains
+ * inside `parent`. Used after `path.join(parent, candidate)` so even an
+ * unexpected escape produces a thrown error rather than a silent
+ * read/write outside the repo.
+ */
+function assertWithin(parent: string, candidate: string): string {
+  const parentResolved = resolve(parent);
+  const candidateResolved = resolve(candidate);
+  // parentResolved + sep, but use startsWith with separator-aware match.
+  const sep = parentResolved.endsWith('/') ? '' : '/';
+  if (
+    candidateResolved !== parentResolved &&
+    !candidateResolved.startsWith(parentResolved + sep)
+  ) {
+    throw new InvalidContentIdError(
+      candidate,
+      `path escapes account_repo (${candidateResolved} not under ${parentResolved})`,
+    );
+  }
+  return candidateResolved;
+}
 
 export interface WithStateResult<T> {
   state: StateJson;
@@ -48,9 +130,17 @@ export class AccountRepo {
     return join(this.path, 'state.json');
   }
 
-  /** content/<id>/ への absolute path */
+  /**
+   * content/<id>/ への absolute path
+   *
+   * `contentId` validates against {@link assertSafeId} (alphanumeric + `_-`,
+   * no `..` / `/` / NUL). Throws {@link InvalidContentIdError} on violation
+   * so callers cannot accidentally read/write outside the account_repo.
+   */
   contentDir(contentId: string): string {
-    return join(this.path, 'content', contentId);
+    const safe = assertSafeId(contentId, 'content_id');
+    const candidate = join(this.path, 'content', safe);
+    return assertWithin(this.path, candidate);
   }
 
   /**

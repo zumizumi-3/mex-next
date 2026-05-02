@@ -15,6 +15,7 @@ import { questionsForCadence } from '../../../src/phase-questionnaire/questions.
 import { AccountRepo } from '../../../src/account-state/repo.js';
 import type { LlmProvider } from '../../../src/llm/bridge.js';
 import type { DiscordPoster } from '../../../src/posting/collectors/types.js';
+import type { AppConfig } from '../../../src/config.js';
 
 interface Scaffold {
   workDir: string;
@@ -170,6 +171,56 @@ describe('submitPhaseAnswers — synthesize', () => {
     });
     expect(updated.status).toBe('failed');
     expect(updated.lastError).toContain('synth_failed');
+  });
+
+  it('LLM 失敗 + config 渡しで operator escalation post が走る', async () => {
+    scaf = await setup();
+    const session = await startPhaseQuestionnaire({
+      repo: scaf.repo,
+      bridge: makeBridge(),
+      poster: scaf.poster,
+      cadence: 'monthly',
+    });
+    const answers: Record<string, string> = {};
+    for (const q of session.questions) answers[q.id] = '答え';
+
+    const config: AppConfig = {
+      accountId: 'zumi-x',
+      accountRepo: scaf.workDir,
+      discordBotToken: 'tok',
+      anthropicApiKey: undefined,
+      xApiConsumerKey: undefined,
+      xApiConsumerSecret: undefined,
+      xApiAccessToken: undefined,
+      xApiAccessTokenSecret: undefined,
+      operatorDiscordUserIds: ['oper-1'],
+      githubToken: undefined,
+      logLevel: 'info',
+      pendingTurnStorePath: `${scaf.workDir}/pending.json`,
+      sessionStorePath: `${scaf.workDir}/sessions.json`,
+      approvalStorePath: `${scaf.workDir}/approvals.jsonl`,
+      judgmentEventsPath: `${scaf.workDir}/judgments.jsonl`,
+      discordChannelMap: {},
+      collectorsEnabled: false,
+      collectorIntervalMs: 30 * 60 * 1000,
+    };
+
+    const updated = await submitPhaseAnswers({
+      repo: scaf.repo,
+      bridge: makeBridge({ synthFails: true }),
+      poster: scaf.poster,
+      sessionId: session.id,
+      answers,
+      config,
+    });
+    expect(updated.status).toBe('failed');
+    // Now scaf.posts should contain (1) the original thread + (2) an
+    // escalation triggered by escalateOperator.
+    const escalations = scaf.posts.filter((p) => p.kind === 'escalation');
+    expect(escalations.length).toBeGreaterThanOrEqual(1);
+    expect(escalations.some((p) => p.content.includes('phase_questionnaire synthesize failed'))).toBe(true);
+    expect(escalations.some((p) => p.content.includes('<@oper-1>'))).toBe(true);
+    expect(escalations.some((p) => p.content.includes('resubmit'))).toBe(true);
   });
 
   it('listPhaseQuestionnaireSessions で cadence で絞り込める', async () => {

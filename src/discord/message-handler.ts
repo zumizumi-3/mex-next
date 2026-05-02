@@ -37,12 +37,9 @@ import type { PendingTurnStore } from '../conversation/pending-turn-store.js';
 import type { SessionStore } from '../conversation/session-store.js';
 import { TurnCancelledError } from '../conversation/turn-cancellation.js';
 import { buildTurnMessage, hasTurnMessageContent } from '../conversation/turn-message.js';
-import {
-  runConversationTurn,
-  type ConversationRunner,
-} from '../conversation/turn-orchestrator.js';
+import { runConversationTurn, type ConversationRunner } from '../conversation/turn-orchestrator.js';
 import { createProgressIndicator, type ProgressChannel } from './progress-indicator.js';
-import { BUSY_REPLY_TEMPLATE } from './templates.js';
+import { BUSY_REPLY_TEMPLATE, OVERLOAD_REPLY_TEMPLATE } from './templates.js';
 import type { AutoUnarchiveManager, ThreadLike } from './thread-lifecycle.js';
 
 export interface DiscordRoutingConfig {
@@ -112,10 +109,7 @@ export async function handleDiscordMessage(
 
   const lockState = getConversationLockState(conversationKey);
   if (lockState.running) {
-    log?.info(
-      { conversationKey, queuedCount: lockState.queuedCount },
-      'message_busy_dropped',
-    );
+    log?.info({ conversationKey, queuedCount: lockState.queuedCount }, 'message_busy_dropped');
     await sendSafe(message.channel, BUSY_REPLY_TEMPLATE, log);
     return;
   }
@@ -138,7 +132,7 @@ export async function handleDiscordMessage(
   });
 
   try {
-    await runWithConversationLock(conversationKey, async () => {
+    const lockResult = await runWithConversationLock(conversationKey, async () => {
       await progress.start();
       const result = await runConversationTurn({
         accountId: deps.config.accountId,
@@ -160,15 +154,17 @@ export async function handleDiscordMessage(
       // If suppressReply is false but output is empty, progress.done() already
       // showed ✅ — that's the right UX (handler explicitly returned nothing).
     });
+    if (!lockResult.accepted) {
+      log?.info({ conversationKey }, 'message_overload_dropped');
+      await sendSafe(message.channel, OVERLOAD_REPLY_TEMPLATE, log);
+      return;
+    }
   } catch (error) {
     if (error instanceof TurnCancelledError) {
       await progress.cancelled();
       return;
     }
-    log?.error(
-      { conversationKey, error: errMsg(error) },
-      'message_handler_failed',
-    );
+    log?.error({ conversationKey, error: errMsg(error) }, 'message_handler_failed');
     await progress.failed(formatUserFacingError(error));
   }
 }
@@ -177,10 +173,7 @@ export async function handleDiscordMessage(
  * Decide whether `message` is for us. Returns true iff the bot
  * should pick up this message; false otherwise.
  */
-export function shouldHandleMessage(
-  message: Message,
-  config: DiscordRoutingConfig,
-): boolean {
+export function shouldHandleMessage(message: Message, config: DiscordRoutingConfig): boolean {
   if (!message.author || message.author.bot) {
     return false;
   }
@@ -303,10 +296,7 @@ async function resolveConversation(
         autoArchiveDuration: 1440,
         reason: 'mex-next conversation thread',
       });
-      log?.info(
-        { threadId: thread.id, parentId: thread.parentId ?? null },
-        'thread_started',
-      );
+      log?.info({ threadId: thread.id, parentId: thread.parentId ?? null }, 'thread_started');
       return { key: thread.id, replyChannel: thread as unknown as TextBasedChannel };
     } catch (error) {
       log?.warn(
@@ -319,13 +309,57 @@ async function resolveConversation(
   return { key: message.channelId, replyChannel: message.channel as TextBasedChannel };
 }
 
-function buildThreadName(message: Message): string {
-  const raw = String(message.content ?? '').replace(/\s+/g, ' ').trim();
+/**
+ * Discord channel-name limit. The hard cap is 100, but we keep slack
+ * for the trailing ellipsis we may append.
+ */
+export const THREAD_NAME_MAX_GRAPHEMES = 90;
+
+/**
+ * Slice `value` into at most `maxGraphemes` user-perceived characters.
+ *
+ * Plain `.slice()` truncates by UTF-16 code units, which can split a
+ * Japanese kana, emoji ZWJ sequence, or surrogate pair. We use
+ * `Intl.Segmenter` (grapheme granularity) when available and fall back
+ * to code-unit slicing on environments that lack it.
+ */
+export function sliceGraphemes(value: string, maxGraphemes: number): string {
+  const text = String(value ?? '');
+  if (maxGraphemes <= 0 || text.length === 0) return '';
+  const SegmenterCtor = (
+    globalThis as unknown as {
+      Intl?: { Segmenter?: typeof Intl.Segmenter };
+    }
+  ).Intl?.Segmenter;
+  if (!SegmenterCtor) {
+    return text.slice(0, maxGraphemes);
+  }
+  try {
+    const seg = new SegmenterCtor('ja', { granularity: 'grapheme' });
+    let end = 0;
+    let count = 0;
+    for (const part of seg.segment(text)) {
+      if (count >= maxGraphemes) break;
+      end = part.index + part.segment.length;
+      count += 1;
+    }
+    return count >= maxGraphemes ? text.slice(0, end) : text;
+  } catch {
+    return text.slice(0, maxGraphemes);
+  }
+}
+
+export function buildThreadName(message: Message): string {
+  const raw = String(message.content ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const stripped = raw
     .replace(/<@!?\d+>/g, '')
     .replace(/<#\d+>/g, '')
     .trim();
-  const head = (stripped || 'メッセージ').slice(0, 40);
+  // Head: first 40 graphemes (not code units) so CJK / emoji never get
+  // sliced through the middle of a surrogate pair.
+  const head = sliceGraphemes(stripped || 'メッセージ', 40);
   // Append author short id for uniqueness.
   const tag = message.author?.username
     ? `@${message.author.username}`
@@ -333,7 +367,10 @@ function buildThreadName(message: Message): string {
       ? `@${message.author.id.slice(-4)}`
       : '';
   const candidate = tag ? `${head} (${tag})` : head;
-  return candidate.length > 95 ? candidate.slice(0, 95) + '…' : candidate;
+  // Final guard — grapheme-safe truncation to keep the thread name within
+  // Discord's 100-char hard limit (we leave ~10 chars of slack).
+  const limited = sliceGraphemes(candidate, THREAD_NAME_MAX_GRAPHEMES);
+  return limited.length < candidate.length ? `${limited}…` : candidate;
 }
 
 function collectAttachments(message: Message): unknown[] {

@@ -86,26 +86,106 @@ export const PublishItemSchema = z
   .passthrough();
 export type PublishItem = z.infer<typeof PublishItemSchema>;
 
+/**
+ * Inbound reaction (quote) session.
+ *
+ * Stored as `Record<event_id, session>` because the collector
+ * (`posting/collectors/inbound-quote.ts`) keys by the quote tweet id
+ * for dedupe. Schema is intentionally lenient (`passthrough`) — the
+ * canonical shape lives in the collector.
+ */
 const InboundReactionSessionSchema = z
   .object({
-    id: z.string(),
-    risk: z.enum(['low_risk', 'medium_risk', 'high_risk']).default('low_risk'),
-    state: z.string().default('pending'),
     event_id: z.string().default(''),
+    source_tweet_id: z.string().default(''),
+    quoter_author_id: z.string().default(''),
+    /**
+     * Lifecycle:
+     *   open            — fresh session, not yet handed to Discord
+     *   posted          — Discord post succeeded
+     *   discord_pending — collector created the session but Discord post
+     *                     failed; will be retried on the next poll cycle
+     *   error           — terminal failure (LLM rejected etc.)
+     */
+    status: z
+      .enum(['open', 'posted', 'discord_pending', 'error'])
+      .default('open'),
+    reason: z.string().default(''),
+    draft_mode: z.enum(['reply', 'quote']).default('quote'),
+    draft_text: z.string().default(''),
     created_at: z.string().default(''),
     updated_at: z.string().default(''),
+    thread_id: z.string().optional(),
+    message_id: z.string().optional(),
   })
   .passthrough();
+export type InboundReactionSessionJson = z.infer<
+  typeof InboundReactionSessionSchema
+>;
 
+/**
+ * Inbound reply session.
+ *
+ * Stored as `Record<event_id, session>` because the collector
+ * (`posting/collectors/inbound-reply.ts`) keys by the mention tweet id
+ * for dedupe. Schema mirrors the collector contract loosely.
+ */
 const InboundReplySessionSchema = z
   .object({
-    id: z.string(),
-    state: z.string().default('pending'),
-    parent_tweet_id: z.string().default(''),
+    event_id: z.string().default(''),
+    tweet_id: z.string().default(''),
+    author_handle: z.string().default(''),
+    risk_level: z
+      .enum(['low_risk', 'medium_risk', 'high_risk'])
+      .default('low_risk'),
+    reason: z.string().default(''),
+    draft_text: z.string().default(''),
+    /**
+     * Lifecycle:
+     *   open            — fresh session, not yet handed to Discord
+     *   posted          — customer thread posted (low_risk path)
+     *   escalated       — operator alert dispatched (medium/high risk)
+     *   discord_pending — Discord post failed; retry on next poll
+     *   error           — terminal failure (LLM/dispatch fatal)
+     */
+    status: z
+      .enum(['open', 'posted', 'escalated', 'discord_pending', 'error'])
+      .default('open'),
     created_at: z.string().default(''),
     updated_at: z.string().default(''),
+    thread_id: z.string().optional(),
+    message_id: z.string().optional(),
   })
   .passthrough();
+export type InboundReplySessionJson = z.infer<
+  typeof InboundReplySessionSchema
+>;
+
+/**
+ * Convert legacy `array<session>` shapes into `Record<event_id, session>`
+ * so old state.json files still load. Sessions without a usable
+ * `event_id` (or `id`) are dropped — they cannot be deduped anyway.
+ */
+function preprocessSessionDict(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const out: Record<string, unknown> = {};
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      const key =
+        typeof rec['event_id'] === 'string' && rec['event_id']
+          ? rec['event_id']
+          : typeof rec['id'] === 'string' && rec['id']
+            ? rec['id']
+            : '';
+      if (!key) continue;
+      out[key] = rec;
+    }
+    return out;
+  }
+  if (value && typeof value === 'object') return value;
+  return {};
+}
 
 /**
  * Target discovery session — phase tracking for the
@@ -308,10 +388,21 @@ export const StateJsonSchema = z
       .default([]),
     publish_queue: z.array(PublishItemSchema).default([]),
 
-    // Interaction
+    // Interaction — dict keyed by event_id so the collector can dedupe.
+    // Legacy array<session> shape is normalized via preprocessSessionDict.
     interaction_queue: z.array(z.unknown()).default([]),
-    inbound_reaction_sessions: z.array(InboundReactionSessionSchema).default([]),
-    inbound_reply_sessions: z.array(InboundReplySessionSchema).default([]),
+    inbound_reaction_sessions: z
+      .preprocess(
+        preprocessSessionDict,
+        z.record(InboundReactionSessionSchema),
+      )
+      .default({}),
+    inbound_reply_sessions: z
+      .preprocess(
+        preprocessSessionDict,
+        z.record(InboundReplySessionSchema),
+      )
+      .default({}),
 
     // Target discovery — Discord button flow
     target_discovery_sessions: z

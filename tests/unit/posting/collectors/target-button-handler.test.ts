@@ -30,6 +30,7 @@ interface FakeRepo {
   state: Record<string, unknown>;
   loadState(): Promise<Record<string, unknown>>;
   saveState(state: Record<string, unknown>): Promise<void>;
+  writeState(state: Record<string, unknown>): Promise<void>;
   withStateLock<T>(
     fn: (state: Record<string, unknown>) => Promise<{ state: Record<string, unknown>; result: T }>,
   ): Promise<T>;
@@ -42,6 +43,9 @@ function makeRepo(initial: Record<string, unknown> = {}): FakeRepo {
       return deepClone(this.state);
     },
     async saveState(state) {
+      this.state = deepClone(state);
+    },
+    async writeState(state) {
       this.state = deepClone(state);
     },
     async withStateLock(fn) {

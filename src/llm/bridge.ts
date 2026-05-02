@@ -23,12 +23,7 @@
 import { CircuitBreaker, CircuitOpenError } from '../utils/circuit-breaker.js';
 import { retryWithBackoff, type RetryOptions } from '../utils/retry.js';
 import type { LlmKind, LlmProviderName } from './kinds.js';
-import {
-  KIND_CACHE_DEFAULT,
-  KIND_MAX_TOKENS,
-  KIND_PROVIDER,
-  KIND_TIMEOUT_MS,
-} from './kinds.js';
+import { KIND_CACHE_DEFAULT, KIND_MAX_TOKENS, KIND_PROVIDER, KIND_TIMEOUT_MS } from './kinds.js';
 import { KIND_SYSTEM_PROMPT } from './prompts.js';
 
 /**
@@ -171,9 +166,7 @@ export function createBridge(config: LlmBridgeConfig): LlmProvider {
       const providerName = overridden ?? KIND_PROVIDER[opts.kind];
       // Fallback: if anthropic is requested but not configured, route to claudeCode.
       const provider =
-        providerName === 'anthropic' && config.anthropic
-          ? config.anthropic
-          : config.claudeCode;
+        providerName === 'anthropic' && config.anthropic ? config.anthropic : config.claudeCode;
       const filled = fillDefaults(opts);
 
       const invoke = (): Promise<LlmResponse> => provider.call(filled);
@@ -183,8 +176,7 @@ export function createBridge(config: LlmBridgeConfig): LlmProvider {
       }
 
       const retryOpts = buildLlmRetryOptions(config.resilience);
-      const attempt = (): Promise<LlmResponse> =>
-        retryWithBackoff(invoke, retryOpts);
+      const attempt = (): Promise<LlmResponse> => retryWithBackoff(invoke, retryOpts);
 
       if (!breaker) {
         return attempt();
@@ -201,18 +193,42 @@ export function createBridge(config: LlmBridgeConfig): LlmProvider {
   };
 }
 
-function buildLlmRetryOptions(cfg: LlmResilienceConfig): RetryOptions {
+/**
+ * Floor for the per-retry delay once a 429 (rate limit) was seen.
+ *
+ * Rationale: Anthropic's rate limit window is on the order of a minute
+ * for low-tier accounts. Default initialDelayMs=500ms backs off to ~2s
+ * by the third attempt — short enough to slam into another 429.
+ * Lifting the floor to 5s gives the upstream window a real chance to
+ * reset before our last retry.
+ */
+export const RATE_LIMIT_INITIAL_DELAY_MS = 5_000;
+
+export function buildLlmRetryOptions(cfg: LlmResilienceConfig): RetryOptions {
   const attempts = cfg.attempts ?? 3;
   const initialDelayMs = cfg.initialDelayMs ?? 500;
   const maxDelayMs = cfg.maxDelayMs ?? 30_000;
-  return {
+  // computeDelayMs is `initial * factor^index`. Once a 429 lands on
+  // attempt N, we promote the *base* delay so the next sleep is at
+  // least RATE_LIMIT_INITIAL_DELAY_MS regardless of attempt index. We
+  // do this by mutating the options object that retryWithBackoff reads
+  // — `RetryOptions.initialDelayMs` is the field in the closed-over
+  // shape, so we keep a mutable wrapper.
+  const dynamic: RetryOptions = {
     attempts,
     initialDelayMs,
     maxDelayMs,
     backoffFactor: 2,
     shouldRetry: (error) => defaultLlmShouldRetry(error),
-    onRetry: () => undefined,
+    onRetry: (error) => {
+      if (isRateLimitError(error)) {
+        if (dynamic.initialDelayMs < RATE_LIMIT_INITIAL_DELAY_MS) {
+          dynamic.initialDelayMs = RATE_LIMIT_INITIAL_DELAY_MS;
+        }
+      }
+    },
   };
+  return dynamic;
 }
 
 /**

@@ -234,6 +234,58 @@ export const INTENT_FEW_SHOTS: readonly IntentExample[] = [
       confirmation_message: 'mex-bot を最新版に更新しますか? (再起動を伴います)',
     },
   },
+  {
+    user: '投稿案を 7 本作って',
+    result: {
+      intent: 'seed.run',
+      args: { count: 7 },
+      confirmation_needed: false,
+    },
+  },
+  {
+    user: 'シード投稿を生成して',
+    result: { intent: 'seed.run', args: {}, confirmation_needed: false },
+  },
+  {
+    user: '過去投稿を学習',
+    result: { intent: 'training.run', args: {}, confirmation_needed: false },
+  },
+  {
+    user: '初期学習やって',
+    result: { intent: 'training.run', args: {}, confirmation_needed: false },
+  },
+  {
+    user: '月次アンケート',
+    result: {
+      intent: 'phase.questionnaire_start',
+      args: { cadence: 'monthly' },
+      confirmation_needed: false,
+    },
+  },
+  {
+    user: '週次アンケート始めて',
+    result: {
+      intent: 'phase.questionnaire_start',
+      args: { cadence: 'weekly' },
+      confirmation_needed: false,
+    },
+  },
+  {
+    user: 'アンケート状況',
+    result: {
+      intent: 'phase.questionnaire_status',
+      args: {},
+      confirmation_needed: false,
+    },
+  },
+  {
+    user: 'アンケートの進捗見せて',
+    result: {
+      intent: 'phase.questionnaire_status',
+      args: {},
+      confirmation_needed: false,
+    },
+  },
 ];
 
 /**
@@ -288,7 +340,7 @@ export const REPAIR_SYSTEM = [
 ].join('\n');
 
 export const REVISE_SYSTEM = [
-  'You revise one Japanese X post candidate per the customer\'s natural-language instruction in MeX Posting v2.',
+  "You revise one Japanese X post candidate per the customer's natural-language instruction in MeX Posting v2.",
   'Apply payload.latest_instruction clearly while preserving voice and meaning.',
   'If the instruction is impossible (e.g. exceeds character budget), explain in not_applied.',
   'Return only a JSON object with keys: text, applied_instruction, change_summary, not_applied, self_check.',
@@ -342,7 +394,7 @@ export const INBOUND_REPLY_DRAFT_SYSTEM = [
 export const QUOTE_GENERATE_SYSTEM = [
   'You write one short Japanese X quote-tweet comment for MeX.',
   'Read payload.source_tweet carefully and return one comment that adds a single concrete deepening ' +
-    'in the account\'s own voice. Use payload.voice_profile, payload.writing_exemplars, and payload.hot_topic ' +
+    "in the account's own voice. Use payload.voice_profile, payload.writing_exemplars, and payload.hot_topic " +
     'selectively. Stay within 140 Japanese characters. Do not paraphrase the source, do not echo it, ' +
     'do not over-praise, and do not invent facts.',
   'Return only a JSON object with keys: text, evidence_refs, voice_check.',

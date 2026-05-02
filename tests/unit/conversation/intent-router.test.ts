@@ -19,6 +19,7 @@ import {
 } from '../../../src/conversation/intent-router.js';
 import type { LlmProvider } from '../../../src/llm/bridge.js';
 import { LlmTimeoutError } from '../../../src/llm/bridge.js';
+import { INTENT_FEW_SHOTS } from '../../../src/llm/prompts.js';
 
 function makeBridge(text: string): LlmProvider {
   return {
@@ -174,9 +175,7 @@ describe('classifyIntent — safety overrides (LLM hallucination)', () => {
 
   it('every member of DESTRUCTIVE_INTENTS produces confirmationNeeded=true', async () => {
     for (const intent of DESTRUCTIVE_INTENTS) {
-      const bridge = makeBridge(
-        JSON.stringify({ intent, args: {}, confirmation_needed: false }),
-      );
+      const bridge = makeBridge(JSON.stringify({ intent, args: {}, confirmation_needed: false }));
       const result = await classifyIntent({ userText: 'x', bridge });
       expect(result.confirmationNeeded, `intent=${intent}`).toBe(true);
     }
@@ -184,9 +183,7 @@ describe('classifyIntent — safety overrides (LLM hallucination)', () => {
 
   it('every member of DISPLAY_INTENTS produces confirmationNeeded=false', async () => {
     for (const intent of DISPLAY_INTENTS) {
-      const bridge = makeBridge(
-        JSON.stringify({ intent, args: {}, confirmation_needed: true }),
-      );
+      const bridge = makeBridge(JSON.stringify({ intent, args: {}, confirmation_needed: true }));
       const result = await classifyIntent({ userText: 'x', bridge });
       expect(result.confirmationNeeded, `intent=${intent}`).toBe(false);
     }
@@ -244,6 +241,72 @@ describe('classifyIntent — fallbacks', () => {
     );
     const result = await classifyIntent({ userText: '予約見せて', bridge });
     expect(result.intent).toBe('schedule.list');
+  });
+});
+
+describe('INTENT_FEW_SHOTS coverage', () => {
+  it('contains examples for seed.run / training.run / phase.questionnaire_*', () => {
+    const intents = new Set(INTENT_FEW_SHOTS.map((ex) => ex.result.intent));
+    expect(intents.has('seed.run')).toBe(true);
+    expect(intents.has('training.run')).toBe(true);
+    expect(intents.has('phase.questionnaire_start')).toBe(true);
+    expect(intents.has('phase.questionnaire_status')).toBe(true);
+  });
+});
+
+describe('classifyIntent — new few-shot intents (seed/training/phase)', () => {
+  it('routes seed.run with count when LLM extracts it', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'seed.run',
+        args: { count: 7 },
+        confirmation_needed: false,
+      }),
+    );
+    const result = await classifyIntent({ userText: '投稿案を 7 本作って', bridge });
+    expect(result.intent).toBe('seed.run');
+    expect(result.confirmationNeeded).toBe(false);
+    expect(result.args.count).toBe(7);
+  });
+
+  it('routes training.run with no args', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'training.run',
+        args: {},
+        confirmation_needed: false,
+      }),
+    );
+    const result = await classifyIntent({ userText: '過去投稿を学習', bridge });
+    expect(result.intent).toBe('training.run');
+    expect(result.confirmationNeeded).toBe(false);
+  });
+
+  it('routes phase.questionnaire_start with cadence=monthly', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'phase.questionnaire_start',
+        args: { cadence: 'monthly' },
+        confirmation_needed: false,
+      }),
+    );
+    const result = await classifyIntent({ userText: '月次アンケート', bridge });
+    expect(result.intent).toBe('phase.questionnaire_start');
+    expect(result.confirmationNeeded).toBe(false);
+    expect(result.args.cadence).toBe('monthly');
+  });
+
+  it('routes phase.questionnaire_status with no args', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'phase.questionnaire_status',
+        args: {},
+        confirmation_needed: false,
+      }),
+    );
+    const result = await classifyIntent({ userText: 'アンケート状況', bridge });
+    expect(result.intent).toBe('phase.questionnaire_status');
+    expect(result.confirmationNeeded).toBe(false);
   });
 });
 

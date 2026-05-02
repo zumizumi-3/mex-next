@@ -147,13 +147,31 @@ function pickMorningDraft(state: StateJson, today: string): DigestDraftSummary |
 }
 
 function countPendingReplies(state: StateJson): number {
-  const sessions = (state['inbound_reply_sessions'] ?? []) as unknown[];
-  if (!Array.isArray(sessions)) return 0;
+  // Collector writes a Record<event_id, session> (see
+  // src/posting/collectors/inbound-reply.ts). Legacy state may still
+  // hold an array; handle both for safety.
+  const raw = state['inbound_reply_sessions'];
+  const iter: Iterable<unknown> = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object'
+      ? Object.values(raw as Record<string, unknown>)
+      : [];
   let count = 0;
-  for (const s of sessions) {
+  for (const s of iter) {
     if (!s || typeof s !== 'object') continue;
-    const status = String((s as Record<string, unknown>)['state'] ?? 'pending');
-    if (status === 'pending' || status === 'open') count += 1;
+    const rec = s as Record<string, unknown>;
+    // Collector tracks lifecycle via `status`. Legacy data may have
+    // tracked it via `state`. Treat either as equivalent.
+    const status = String(
+      rec['status'] ?? rec['state'] ?? 'pending',
+    );
+    if (
+      status === 'open' ||
+      status === 'pending' ||
+      status === 'discord_pending'
+    ) {
+      count += 1;
+    }
   }
   return count;
 }

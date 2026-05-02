@@ -57,6 +57,9 @@ function createRepo(initial?: {
     async saveState(s) {
       fixture.state = JSON.parse(JSON.stringify(s));
     },
+    async writeState(s) {
+      fixture.state = JSON.parse(JSON.stringify(s));
+    },
     async loadDraftText() {
       return null;
     },
@@ -225,6 +228,46 @@ describe('applyWriteback', () => {
       'brand',
       'half_focus',
     ]);
+  });
+
+  it('rolls back state mutation when account.json save fails (no orphan history)', async () => {
+    // saveAccount throws → state mutation must NOT commit either.
+    // This is the "atomic" guarantee of the writeback transaction.
+    const fixture = createRepo({
+      account: { brand: { core_thesis: 'OLD' } },
+      state: { plan_writeback_history: [] },
+    });
+    // Replace saveAccount with a failing impl after fixture creation so we
+    // don't break the loadAccount snapshot read.
+    const originalSaveAccount = fixture.repo.saveAccount.bind(fixture.repo);
+    fixture.repo.saveAccount = async () => {
+      throw new Error('disk full');
+    };
+
+    const result = await applyWriteback({
+      repo: fixture.repo,
+      proposals: [
+        {
+          target: 'brand',
+          before: { core_thesis: 'OLD' },
+          after: { core_thesis: 'NEW' },
+          diffSummary: 'OLD → NEW',
+          rationale: 'engagement',
+        },
+      ],
+    });
+
+    // Account.json on disk is unchanged (saveAccount never succeeded).
+    expect(fixture.account.brand?.core_thesis).toBe('OLD');
+    // State.json must also be unchanged — no plan_writeback_history entry,
+    // because the withStateLock callback re-threw after saveAccount failed.
+    expect(fixture.state.plan_writeback_history).toEqual([]);
+    // Caller observes the failure under errors map, applied list is reset.
+    expect(result.errors['__account_persist__']).toMatch(/disk full/);
+    expect(result.applied).toEqual([]);
+
+    // Restore for safety in further tests (none after this in the block).
+    fixture.repo.saveAccount = originalSaveAccount;
   });
 });
 

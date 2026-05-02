@@ -9,6 +9,8 @@
  */
 
 import type { HandlerContext, HandlerResult, HandlerArgs } from './types.js';
+import { isOperator } from './system.js';
+import { STATE_EMOJI } from '../discord/templates.js';
 
 const GATES = [
   'publish_requires_approval',
@@ -24,7 +26,7 @@ export async function handleAutomationStatus(
 ): Promise<HandlerResult> {
   const account = await ctx.repo.loadAccount();
   const policy = (account.approval_policy ?? {}) as Record<string, unknown>;
-  const lines = ['🔐 自動運用 status'];
+  const lines = [`${STATE_EMOJI.approval} 自動運用 status`];
   for (const gate of GATES) {
     const requires = Boolean(policy[gate]);
     const emoji = requires ? '🟡 manual' : '🟢 auto';
@@ -37,6 +39,13 @@ export async function handleAutomationEnableAll(
   ctx: HandlerContext,
   _args: HandlerArgs,
 ): Promise<HandlerResult> {
+  if (!isOperator(ctx)) {
+    return {
+      content:
+        '⚠️ 自動運用の一括 ON は operator 専用機能です。OPERATOR_DISCORD_USER_IDS に登録された Discord アカウントから実行してください。',
+      tag: 'automation.enable_all.unauthorized',
+    };
+  }
   const account = await ctx.repo.loadAccount();
   const policy = { ...((account.approval_policy ?? {}) as Record<string, unknown>) };
   for (const gate of GATES) {
@@ -45,7 +54,7 @@ export async function handleAutomationEnableAll(
   const next = { ...account, approval_policy: policy } as typeof account;
   await ctx.repo.saveAccount(next);
   return {
-    content: '✅ 自動運用を一括 ON にしました (5 gate を auto に切替).',
+    content: `${STATE_EMOJI.ok} 自動運用を一括 ON にしました (5 gate を auto に切替).`,
     tag: 'automation.enable_all',
   };
 }

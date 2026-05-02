@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  MAX_QUEUED,
   getConversationLockState,
   resetConversationLocksForTest,
   runWithConversationLock,
@@ -97,10 +98,57 @@ describe('conversation-locks', () => {
 
     // A subsequent call should run normally.
     let ran = false;
-    await runWithConversationLock('thread-e', async () => {
+    const result = await runWithConversationLock('thread-e', async () => {
       ran = true;
     });
     expect(ran).toBe(true);
+    expect(result.accepted).toBe(true);
+  });
+
+  it('returns accepted=true with the function value on success', async () => {
+    const result = await runWithConversationLock('thread-v', async () => 42);
+    expect(result).toEqual({ accepted: true, value: 42 });
+  });
+
+  it(`rejects new callers when the queue cap (${MAX_QUEUED}) is hit`, async () => {
+    // Hold the head of the lock so anything else queues behind it.
+    const release = withResolvers<void>();
+    const queueReleases: Array<{ promise: Promise<void>; resolve: () => void }> = [];
+    const inflight = runWithConversationLock('thread-cap', async () => {
+      await release.promise;
+    });
+    await flushMicrotasks();
+
+    // Saturate the queue exactly to MAX_QUEUED waiters.
+    const queued: Array<Promise<unknown>> = [];
+    for (let i = 0; i < MAX_QUEUED; i += 1) {
+      const r = withResolvers<void>();
+      queueReleases.push(r);
+      queued.push(
+        runWithConversationLock('thread-cap', async () => {
+          await r.promise;
+        }),
+      );
+      await flushMicrotasks();
+    }
+
+    expect(getConversationLockState('thread-cap').queuedCount).toBe(MAX_QUEUED);
+
+    // The (MAX_QUEUED + 1)-th caller must be rejected without running.
+    let extraRan = false;
+    const overflow = await runWithConversationLock('thread-cap', async () => {
+      extraRan = true;
+    });
+    expect(overflow).toEqual({ accepted: false });
+    expect(extraRan).toBe(false);
+
+    // Drain everything so the test exits cleanly.
+    release.resolve();
+    await inflight;
+    for (const r of queueReleases) {
+      r.resolve();
+    }
+    await Promise.all(queued);
   });
 });
 

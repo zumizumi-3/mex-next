@@ -13,13 +13,13 @@ import {
   fillDefaults,
   withTimeout,
   LlmTimeoutError,
+  buildLlmRetryOptions,
+  RATE_LIMIT_INITIAL_DELAY_MS,
+  defaultLlmShouldRetry,
+  isRateLimitError,
 } from '../../../src/llm/bridge.js';
 import type { LlmProvider, LlmCallOptions } from '../../../src/llm/bridge.js';
-import {
-  KIND_MAX_TOKENS,
-  KIND_PROVIDER,
-  KIND_TIMEOUT_MS,
-} from '../../../src/llm/kinds.js';
+import { KIND_MAX_TOKENS, KIND_PROVIDER, KIND_TIMEOUT_MS } from '../../../src/llm/kinds.js';
 import { KIND_SYSTEM_PROMPT } from '../../../src/llm/prompts.js';
 
 function makeRecordingProvider(label: string): LlmProvider & { calls: LlmCallOptions[] } {
@@ -165,6 +165,49 @@ describe('fillDefaults', () => {
       expect(provider).toMatch(/^(anthropic|claude_code)$/);
       expect(KIND_SYSTEM_PROMPT[kind as keyof typeof KIND_SYSTEM_PROMPT]).toBeTruthy();
     }
+  });
+});
+
+describe('buildLlmRetryOptions — 429 backoff escalation', () => {
+  it('starts with the configured initial delay before any 429', () => {
+    const opts = buildLlmRetryOptions({ initialDelayMs: 500 });
+    expect(opts.initialDelayMs).toBe(500);
+  });
+
+  it('lifts the floor to RATE_LIMIT_INITIAL_DELAY_MS once a 429 fires', () => {
+    const opts = buildLlmRetryOptions({ initialDelayMs: 500 });
+    // Simulate the retry helper invoking onRetry with a 429 error.
+    const rateLimit = Object.assign(new Error('rate limited'), { status: 429 });
+    opts.onRetry?.(rateLimit, 0, 0);
+    expect(opts.initialDelayMs).toBeGreaterThanOrEqual(RATE_LIMIT_INITIAL_DELAY_MS);
+  });
+
+  it('does not escalate on non-429 errors', () => {
+    const opts = buildLlmRetryOptions({ initialDelayMs: 500 });
+    const internal = Object.assign(new Error('boom'), { status: 500 });
+    opts.onRetry?.(internal, 0, 0);
+    expect(opts.initialDelayMs).toBe(500);
+  });
+
+  it('keeps the floor once raised even on a subsequent non-429', () => {
+    const opts = buildLlmRetryOptions({ initialDelayMs: 500 });
+    opts.onRetry?.(Object.assign(new Error('429'), { status: 429 }), 0, 0);
+    opts.onRetry?.(Object.assign(new Error('500'), { status: 500 }), 1, 0);
+    expect(opts.initialDelayMs).toBeGreaterThanOrEqual(RATE_LIMIT_INITIAL_DELAY_MS);
+  });
+
+  it('isRateLimitError / defaultLlmShouldRetry agree on 429', () => {
+    const err = Object.assign(new Error('rate'), { status: 429 });
+    expect(isRateLimitError(err)).toBe(true);
+    expect(defaultLlmShouldRetry(err)).toBe(true);
+  });
+
+  it('respects an already-larger configured initialDelayMs', () => {
+    // If the operator deliberately set the initial delay above the
+    // 429 floor, the 429 escalation is a no-op (we never decrease).
+    const opts = buildLlmRetryOptions({ initialDelayMs: 10_000 });
+    opts.onRetry?.(Object.assign(new Error('rate'), { status: 429 }), 0, 0);
+    expect(opts.initialDelayMs).toBe(10_000);
   });
 });
 

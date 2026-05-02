@@ -113,4 +113,31 @@ describe('createProgressIndicator', () => {
     expect(sent.startsWith('[Posting] ')).toBe(true);
     expect(message.edits[0].startsWith('[Posting] ')).toBe(true);
   });
+
+  it('truncates >1900 char done() text to fit Discord 2000 limit', async () => {
+    const { channel, message } = makeMockChannelAndMessage();
+    const indicator = createProgressIndicator({ channel });
+    await indicator.start();
+    const longText = 'あ'.repeat(2500);
+    await indicator.done(longText);
+
+    expect(message.edits.length).toBe(1);
+    const edited = message.edits[0];
+    // The truncated message must respect Discord's 2000 hard limit.
+    expect(edited.length).toBeLessThanOrEqual(2000);
+    // It must include the truncation suffix so customers see it was cut.
+    expect(edited).toContain('…(続きは略)');
+    // Head of the original text must still be present.
+    expect(edited.startsWith('あ')).toBe(true);
+  });
+
+  it('does not truncate when finalText fits within the soft limit', async () => {
+    const { channel, message } = makeMockChannelAndMessage();
+    const indicator = createProgressIndicator({ channel });
+    await indicator.start();
+    const safeText = 'これは普通の応答です。';
+    await indicator.done(safeText);
+    expect(message.edits[0]).toBe(safeText);
+    expect(message.edits[0]).not.toContain('…(続きは略)');
+  });
 });

@@ -50,6 +50,18 @@ export interface QualityResult {
   regenerateHint?: string;
   /** Raw response text from the LLM (for debugging). */
   rawResponse?: string;
+  /**
+   * True iff the failure was a transient LLM transport error (network /
+   * timeout / 5xx). The state machine uses this to decide between:
+   *  - retryable=true  → re-generate immediately (LLM hiccup, no fault
+   *                      with the candidate itself).
+   *  - retryable=false → route to `repairing` (the candidate is bad, or
+   *                      the model emitted unparseable JSON / out-of-
+   *                      range scores — re-prompting won't help).
+   *
+   * Only meaningful when `pass` is false; on pass we never branch on it.
+   */
+  retryable?: boolean;
 }
 
 export const QUALITY_SCORE_MIN = 0;
@@ -80,16 +92,20 @@ function coerceScore(value: unknown): number {
 }
 
 /**
- * Best-effort JSON parse from an LLM response. We try direct JSON.parse
- * first, then look for the first {...} block (the model often wraps
- * the JSON in prose or fenced code blocks).
+ * Best-effort JSON parse from an LLM response.
+ *
+ * Returns `{ payload, parsed }`:
+ *  - `parsed=true`  if we extracted a JSON object (direct or fenced).
+ *  - `parsed=false` if no JSON block was recoverable. The caller treats
+ *    this as a non-retryable schema failure (re-prompting won't fix
+ *    a model that ignores the JSON contract).
  */
-function parseJudgePayload(raw: string): Record<string, unknown> {
+function parseJudgePayload(raw: string): { payload: Record<string, unknown>; parsed: boolean } {
   const text = raw.trim();
   try {
     const direct = JSON.parse(text) as unknown;
     if (direct && typeof direct === 'object') {
-      return direct as Record<string, unknown>;
+      return { payload: direct as Record<string, unknown>, parsed: true };
     }
   } catch {
     // fall through
@@ -99,13 +115,13 @@ function parseJudgePayload(raw: string): Record<string, unknown> {
     try {
       const block = JSON.parse(match[0]) as unknown;
       if (block && typeof block === 'object') {
-        return block as Record<string, unknown>;
+        return { payload: block as Record<string, unknown>, parsed: true };
       }
     } catch {
       // fall through
     }
   }
-  return {};
+  return { payload: {}, parsed: false };
 }
 
 /**
@@ -202,14 +218,23 @@ export async function judgeQuality(opts: {
       payload,
     });
     raw = response.text ?? '';
-    const parsed = parseJudgePayload(raw);
+    const { payload: parsed, parsed: didParse } = parseJudgePayload(raw);
     result = normalize(parsed, raw);
+    if (!didParse) {
+      // JSON parse failed. The model is misbehaving on the contract;
+      // re-prompting from the same candidate will not help. Caller
+      // should treat this as a "repair the candidate" path, not a retry.
+      result = { ...result, retryable: false };
+    }
   } catch (error: unknown) {
+    // Transport / network / 5xx — transient. Caller may retry the
+    // judge once before falling through to `repairing`.
     result = {
       scores: QUALITY_AXES.map((axis) => ({ axis, score: 0, comment: 'judge_error' })),
       pass: false,
       failureAxes: [...QUALITY_AXES],
       rawResponse: error instanceof Error ? `error: ${error.message}` : 'unknown_error',
+      retryable: true,
     };
   }
 

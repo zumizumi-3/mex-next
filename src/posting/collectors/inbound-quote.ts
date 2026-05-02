@@ -39,11 +39,21 @@ export interface CollectInboundQuotesResult {
   errors: number;
 }
 
+/**
+ * Lifecycle:
+ *   open            → fresh, before Discord dispatch
+ *   posted          → Discord card delivered to customer
+ *   discord_pending → Discord call failed; the next collector run retries
+ *   error           → terminal failure (LLM rejected etc.)
+ *
+ * Dedupe in `collectInboundQuotes` skips only the terminal statuses
+ * (`posted` / `error`); `discord_pending` is intentionally retried.
+ */
 interface QuoteSession {
   event_id: string;
   source_tweet_id: string;
   quoter_author_id: string;
-  status: 'open' | 'posted' | 'error';
+  status: 'open' | 'posted' | 'discord_pending' | 'error';
   reason: string;
   draft_mode: 'reply' | 'quote';
   draft_text: string;
@@ -51,6 +61,12 @@ interface QuoteSession {
   thread_id?: string;
   message_id?: string;
 }
+
+/** Statuses that block re-processing of the same event_id. */
+const TERMINAL_QUOTE_STATUSES: ReadonlySet<QuoteSession['status']> = new Set([
+  'posted',
+  'error',
+]);
 
 const STATE_KEY = 'inbound_reaction_sessions';
 const DEFAULT_MAX_FETCH = 30;
@@ -110,31 +126,49 @@ export async function collectInboundQuotes(
   // Process oldest first.
   const ordered = [...tweets].sort((a, b) => compareIds(a.id, b.id));
   for (const tweet of ordered) {
-    if (sessions[tweet.id]) continue;
+    const prior = sessions[tweet.id];
+    if (prior && TERMINAL_QUOTE_STATUSES.has(prior.status)) {
+      // already settled — never reprocess
+      continue;
+    }
 
-    const session: QuoteSession = {
-      event_id: tweet.id,
-      source_tweet_id: tweet.referencedTweetId ?? '',
-      quoter_author_id: tweet.authorId,
-      status: 'open',
-      reason: '',
-      draft_mode: 'quote',
-      draft_text: '',
-      created_at: now(),
-    };
+    const session: QuoteSession = prior
+      ? { ...prior, status: 'open' }
+      : {
+          event_id: tweet.id,
+          source_tweet_id: tweet.referencedTweetId ?? '',
+          quoter_author_id: tweet.authorId,
+          status: 'open',
+          reason: '',
+          draft_mode: 'quote',
+          draft_text: '',
+          created_at: now(),
+        };
 
     let suggestion: QuoteSuggestion;
-    try {
-      suggestion = await draftQuote(bridge, tweet);
-      session.draft_mode = suggestion.mode;
-      session.draft_text = suggestion.text;
-      session.reason = suggestion.rationale ?? '';
-    } catch (error: unknown) {
-      session.status = 'error';
-      session.reason = `draft failed: ${describeError(error)}`;
-      errors += 1;
-      sessions[tweet.id] = session;
-      continue;
+    if (prior && prior.status === 'discord_pending' && prior.draft_text) {
+      // retry with the draft we already produced — avoid LLM re-spend
+      suggestion = {
+        mode: prior.draft_mode,
+        text: prior.draft_text,
+        ...(prior.reason ? { rationale: prior.reason } : {}),
+      };
+    } else {
+      try {
+        suggestion = await draftQuote(bridge, tweet);
+        session.draft_mode = suggestion.mode;
+        session.draft_text = suggestion.text;
+        session.reason = suggestion.rationale ?? '';
+      } catch (error: unknown) {
+        session.status = 'error';
+        session.reason = `draft failed: ${describeError(error)}`;
+        errors += 1;
+        sessions[tweet.id] = session;
+        if (compareIds(tweet.id, highestId) > 0) {
+          highestId = tweet.id;
+        }
+        continue;
+      }
     }
 
     try {
@@ -154,7 +188,8 @@ export async function collectInboundQuotes(
       if (result.messageId) session.message_id = result.messageId;
       posted += 1;
     } catch (error: unknown) {
-      session.status = 'error';
+      // Discord post failed — retry on the next collector run.
+      session.status = 'discord_pending';
       session.reason = `${session.reason} | post failed: ${describeError(error)}`;
       errors += 1;
     }
@@ -165,6 +200,8 @@ export async function collectInboundQuotes(
     }
   }
 
+  // Persist sessions BEFORE moving the cursor so we never advance past
+  // an event whose session-write failed.
   await repo.writeState({ ...state, [STATE_KEY]: sessions });
 
   await updatePollCursor(repo, {

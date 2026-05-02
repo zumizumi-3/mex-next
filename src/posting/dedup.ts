@@ -94,6 +94,11 @@ export async function recentAndScheduledTextPrefixes(opts: {
     const when = parseIso(whenSrc);
     if (!when) continue;
     const ts = when.getTime();
+    // Inclusive window on both edges: an item exactly `daysBack` days
+    // ago, or exactly `daysForward` days ahead, is still considered
+    // "recent / scheduled" for dedup purposes. Off-by-one fix vs the
+    // earlier strict `<` / `>` predicates which silently dropped
+    // items landing on the boundary.
     if (status === 'published' && ts < earliest) continue;
     if ((status === 'scheduled' || status === 'held') && ts > latest) continue;
 

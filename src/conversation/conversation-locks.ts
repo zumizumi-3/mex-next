@@ -35,15 +35,46 @@ interface InternalLockState {
 const inflightByConversation = new Map<string, InternalLockState>();
 
 /**
+ * Hard cap on per-conversation queue depth. Beyond this, additional
+ * `runWithConversationLock` calls are rejected immediately so a flood
+ * of inbound messages can't pile up unbounded work.
+ */
+export const MAX_QUEUED = 5;
+
+/**
+ * Result of {@link runWithConversationLock}. The `accepted` flag is
+ * true on the normal path (the caller's `fn` ran and the resolved
+ * value is in `value`); false when the queue cap was hit and the
+ * call was rejected without running `fn` (the caller should surface
+ * a busy / try-again message to the user).
+ */
+export type ConversationLockResult<T> =
+  | { readonly accepted: true; readonly value: T }
+  | { readonly accepted: false };
+
+/**
  * Run `fn` while holding the lock for `key`. Other callers for the
  * same key wait their turn. The lock is released when `fn` settles
  * (either resolves or rejects).
+ *
+ * Returns `{ accepted: false }` if the queue is already at
+ * {@link MAX_QUEUED}, leaving it to the caller to apologise to the
+ * user. Otherwise returns `{ accepted: true, value }` once `fn`
+ * resolves (and propagates `fn`'s rejection if it throws).
  */
 export async function runWithConversationLock<T>(
   key: string,
   fn: () => Promise<T>,
-): Promise<T> {
+): Promise<ConversationLockResult<T>> {
   const existing = inflightByConversation.get(key);
+
+  // Reject early when the per-conversation queue is already saturated.
+  // Counts both the current waiters AND the in-flight run so the cap
+  // tracks total outstanding work, not just queue depth.
+  if (existing && existing.runningSince !== null && existing.queuedCount >= MAX_QUEUED) {
+    return { accepted: false };
+  }
+
   const previous = existing?.tail ?? Promise.resolve();
 
   let release: () => void = () => {};
@@ -73,7 +104,8 @@ export async function runWithConversationLock<T>(
   }
 
   try {
-    return await fn();
+    const value = await fn();
+    return { accepted: true, value };
   } finally {
     state.runningSince = null;
     state.status = '';

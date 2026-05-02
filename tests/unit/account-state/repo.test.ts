@@ -7,6 +7,10 @@ import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccountRepo } from '../../../src/account-state/index.js';
+import {
+  assertSafeId,
+  InvalidContentIdError,
+} from '../../../src/account-state/repo.js';
 
 let workDir: string;
 let repo: AccountRepo;
@@ -87,6 +91,29 @@ describe('AccountRepo', () => {
     expect(draft).toBeUndefined();
   });
 
+  it('contentDir は path traversal を含む id を reject する', () => {
+    expect(() => repo.contentDir('..')).toThrow(InvalidContentIdError);
+    expect(() => repo.contentDir('../etc/passwd')).toThrow(InvalidContentIdError);
+    expect(() => repo.contentDir('foo/bar')).toThrow(InvalidContentIdError);
+    expect(() => repo.contentDir('foo\\bar')).toThrow(InvalidContentIdError);
+    expect(() => repo.contentDir('foo\0bar')).toThrow(InvalidContentIdError);
+    expect(() => repo.contentDir('')).toThrow(InvalidContentIdError);
+    expect(() => repo.contentDir('-foo')).toThrow(InvalidContentIdError);
+  });
+
+  it('writeContent / readContent / loadDraftText も path traversal を reject する', async () => {
+    await expect(repo.writeContent('..', {}, {})).rejects.toThrow(InvalidContentIdError);
+    await expect(repo.readContent('../escape')).rejects.toThrow(InvalidContentIdError);
+    await expect(repo.loadDraftText('..\\..\\evil')).rejects.toThrow(InvalidContentIdError);
+  });
+
+  it('contentDir は alphanumeric + _- を許容する', () => {
+    expect(() => repo.contentDir('c-1')).not.toThrow();
+    expect(() => repo.contentDir('c_1')).not.toThrow();
+    expect(() => repo.contentDir('Pub_AB12-CD')).not.toThrow();
+    expect(() => repo.contentDir('psn_01HXYZ123')).not.toThrow();
+  });
+
   it('並列 withState で counter increment がロストしない', async () => {
     // state に runtime な counter を持たせる (passthrough field を使う)
     await repo.writeState({
@@ -108,5 +135,23 @@ describe('AccountRepo', () => {
       await readFile(join(workDir, 'state.json'), 'utf-8')
     ) as { _counter: number };
     expect(final._counter).toBe(5);
+  });
+});
+
+describe('assertSafeId', () => {
+  it('rejects publish_id containing forbidden characters', () => {
+    expect(() => assertSafeId('../foo', 'publish_id')).toThrow(InvalidContentIdError);
+    expect(() => assertSafeId('/abs/path', 'publish_id')).toThrow(InvalidContentIdError);
+    expect(() => assertSafeId('foo bar', 'publish_id')).toThrow(InvalidContentIdError);
+  });
+
+  it('returns the input untouched when safe', () => {
+    expect(assertSafeId('pub_abc12345', 'publish_id')).toBe('pub_abc12345');
+  });
+
+  it('rejects non-string input', () => {
+    expect(() => assertSafeId(undefined, 'publish_id')).toThrow(InvalidContentIdError);
+    expect(() => assertSafeId(123, 'publish_id')).toThrow(InvalidContentIdError);
+    expect(() => assertSafeId(null, 'publish_id')).toThrow(InvalidContentIdError);
   });
 });
