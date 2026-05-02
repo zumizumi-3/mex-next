@@ -55,6 +55,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     operatorDiscordUserIds: ['oper-1'],
     githubToken: undefined,
     logLevel: 'info',
+    llmBackend: 'auto',
     pendingTurnStorePath: `${workDir}/pending.json`,
     sessionStorePath: `${workDir}/sessions.json`,
     approvalStorePath: `${workDir}/approvals.jsonl`,

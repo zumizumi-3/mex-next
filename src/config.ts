@@ -29,6 +29,7 @@ const ConfigSchema = z.object({
   operatorDiscordUserIds: z.array(z.string()).default([]),
   githubToken: z.string().optional(),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+  llmBackend: z.enum(['auto', 'claude_code', 'anthropic', 'codex']).default('auto'),
   pendingTurnStorePath: z.string().min(1),
   sessionStorePath: z.string().min(1),
   approvalStorePath: z.string().min(1),
@@ -53,6 +54,7 @@ const ConfigSchema = z.object({
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
+export type LlmBackend = AppConfig['llmBackend'];
 
 const DEFAULT_RUNTIME_DIR = '/var/lib/mex-next';
 
@@ -68,6 +70,16 @@ function parseBool(value: string | undefined, fallback: boolean): boolean {
   if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
   if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
   return fallback;
+}
+
+function parseEnum<T extends readonly [string, ...string[]]>(
+  value: string | undefined,
+  allowed: T,
+  fallback: T[number],
+): T[number] {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  return allowed.includes(normalized) ? normalized : fallback;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -98,6 +110,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     operatorDiscordUserIds: operatorIds,
     githubToken: env.GITHUB_TOKEN,
     logLevel: env.LOG_LEVEL,
+    llmBackend: parseEnum(
+      env.LLM_BACKEND,
+      ['auto', 'claude_code', 'anthropic', 'codex'] as const,
+      'auto',
+    ),
     pendingTurnStorePath: pathFor(
       env,
       'PENDING_TURN_STORE_PATH',

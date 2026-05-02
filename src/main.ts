@@ -5,7 +5,7 @@
  *  - Discord client (Gateway mode)
  *  - Conversation engine (turn orchestrator + locks + pending recovery)
  *  - Domain handlers (posting / scheduling / settings / x-api)
- *  - LLM bridge (anthropic SDK + claude code subprocess)
+ *  - LLM bridge (anthropic SDK + claude code / codex subprocesses)
  *  - Slash command registration
  *  - systemd-friendly signal handling
  *
@@ -16,6 +16,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { execa } from 'execa';
 import { loadConfig, type AppConfig } from './config.js';
 import { createLogger } from './observability/logger.js';
 import { JudgmentEventStream } from './observability/judgment-events.js';
@@ -36,24 +37,28 @@ import {
   createBridge,
   createAnthropicSdkProvider,
   createClaudeCodeProvider,
+  createCodexCliProvider,
   type LlmProvider,
 } from './llm/index.js';
+import { ALL_LLM_KINDS, type LlmKind, type LlmProviderName } from './llm/kinds.js';
 import { XApiClient } from './x-api/client.js';
 import { buildHandlers, type HandlerContext } from './handlers/index.js';
 import { asPostingRepo } from './handlers/repo-adapter.js';
 import type { LlmProviderLike } from './posting/collectors/types.js';
 import { GracefulShutdown, bindShutdownSignals } from './lifecycle/graceful-shutdown.js';
 
-function buildLlmBridge(
+async function buildLlmBridge(
   config: AppConfig,
   log: ReturnType<typeof createLogger>,
   discordPoster: DiscordPosterImpl,
-): LlmProvider {
-  const claudeCode = createClaudeCodeProvider({});
+): Promise<LlmProvider> {
+  const claudeCode = createClaudeCodeProvider({ cwd: config.accountRepo });
   // Anthropic SDK is opt-in: when ANTHROPIC_API_KEY is missing, every kind
   // falls back to claude_code (slightly slower but no separate billing).
   let anthropic: LlmProvider | undefined;
-  if (config.anthropicApiKey && config.anthropicApiKey.length > 0) {
+  const shouldBuildAnthropic =
+    config.llmBackend === 'auto' || config.llmBackend === 'anthropic';
+  if (shouldBuildAnthropic && config.anthropicApiKey && config.anthropicApiKey.length > 0) {
     const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
     anthropic = createAnthropicSdkProvider({
       messages: {
@@ -61,12 +66,38 @@ function buildLlmBridge(
       },
     });
     log.info('llm_bridge_anthropic_enabled');
-  } else {
+  } else if (config.llmBackend === 'anthropic') {
+    log.warn('llm_bridge_anthropic_unavailable');
+  }
+
+  let codex: LlmProvider | undefined;
+  const shouldProbeCodex = config.llmBackend === 'auto' || config.llmBackend === 'codex';
+  if (shouldProbeCodex && (await isCodexCliAvailable())) {
+    codex = createCodexCliProvider({ cwd: config.accountRepo });
+    log.info('llm_bridge_codex_enabled');
+  } else if (config.llmBackend === 'codex') {
+    log.warn('llm_bridge_codex_unavailable');
+  }
+
+  let providerOverrides: Partial<Record<LlmKind, LlmProviderName>> | undefined;
+  if (config.llmBackend !== 'auto') {
+    providerOverrides = overrideAllKinds(config.llmBackend);
+  }
+
+  if (config.llmBackend === 'claude_code') {
     log.info('llm_bridge_claude_code_only');
+  } else if (config.llmBackend === 'codex') {
+    log.info('llm_bridge_codex_only');
+  } else if (!anthropic && !codex) {
+    log.info('llm_bridge_claude_code_only');
+  } else {
+    log.info('llm_bridge_mixed');
   }
   return createBridge({
     ...(anthropic ? { anthropic } : {}),
+    ...(codex ? { codex } : {}),
     claudeCode,
+    ...(providerOverrides ? { providerOverrides } : {}),
     resilience: {
       attempts: 3,
       initialDelayMs: 500,
@@ -88,6 +119,24 @@ function buildLlmBridge(
         .catch(() => undefined);
     },
   });
+}
+
+async function isCodexCliAvailable(): Promise<boolean> {
+  try {
+    const result = await execa('codex', ['--version'], {
+      reject: false,
+      timeout: 5_000,
+    });
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+function overrideAllKinds(provider: LlmProviderName): Partial<Record<LlmKind, LlmProviderName>> {
+  return Object.fromEntries(ALL_LLM_KINDS.map((kind) => [kind, provider])) as Partial<
+    Record<LlmKind, LlmProviderName>
+  >;
 }
 
 function buildXApiClient(
@@ -190,7 +239,7 @@ async function main(): Promise<void> {
         ? log.info('git_sync_ready')
         : log.warn({ reason: result.reason }, 'git_sync_unavailable'),
     );
-  const bridge = buildLlmBridge(config, log, poster);
+  const bridge = await buildLlmBridge(config, log, poster);
   const xApi = buildXApiClient(config, log, poster);
 
   const judgmentEvents = new JudgmentEventStream({

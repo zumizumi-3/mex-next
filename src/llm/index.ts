@@ -50,3 +50,11 @@ export type {
   ExecaRunner,
 } from './claude-code-provider.js';
 export { createClaudeCodeProvider } from './claude-code-provider.js';
+
+export type {
+  CodexCliProviderOptions,
+  CodexExecaPromise,
+  CodexExecaResult,
+  CodexExecaRunner,
+} from './codex-cli-provider.js';
+export { createCodexCliProvider } from './codex-cli-provider.js';

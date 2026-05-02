@@ -1,10 +1,10 @@
-## LLM Bridge — anthropic SDK + claude-code CLI
+## LLM Bridge — anthropic SDK + claude-code CLI + codex CLI
 
 > **対象読者**: src/llm/ を直す developer
 > **前提**: Anthropic API、prompt caching の概念
 > **読了時間**: 約 9 分
 
-bridge はすべての LLM 呼出の単一窓口。kind ごとに provider / timeout / maxtokens / cache を切り替えます。
+bridge はすべての LLM 呼出の単一窓口。kind ごとに provider / timeout / maxtokens / cache を切り替えます。provider は Anthropic SDK direct、Claude Code CLI、Codex CLI の 3 系統です。
 
 ## 1. 全体図
 
@@ -14,18 +14,22 @@ flowchart LR
     B --> C{KIND_PROVIDER<br/>lookup}
     C -->|anthropic| D[AnthropicProvider]
     C -->|claude_code| E[ClaudeCodeProvider]
+    C -->|codex| K[CodexCliProvider]
     D --> F[Anthropic SDK]
     F --> G[Anthropic API]
     E --> H[execa subprocess]
     H --> I[claude CLI]
+    K --> L[execa subprocess]
+    L --> M[codex exec]
     G --> J[response]
     I --> J
+    M --> J
     J --> B
 ```
 
 ## 2. LlmKind と metadata
 
-`src/llm/kinds.ts` で 13 種類の kind を定義:
+`src/llm/kinds.ts` で kind を定義:
 
 | kind | provider | timeout | max_tokens | cache |
 | --- | --- | --- | --- | --- |
@@ -73,7 +77,7 @@ cache_control: ephemeral で 5 分 TTL の prompt cache が効く。同じ syste
 
 ### 3.2 claude-code CLI subprocess
 
-長い "thinking" タスクに使用。execa で起動。
+長い "thinking" タスクに使用。execa で起動。operator workstation の Claude Code login / subscription を使う構成向けです。
 
 ```typescript
 const result = await execa('claude', [
@@ -86,17 +90,32 @@ const result = await execa('claude', [
 const parsed = JSON.parse(result.stdout);
 ```
 
-### 3.3 なぜ 2 系統か
+### 3.3 codex CLI subprocess
 
-| 観点 | anthropic SDK | claude-code CLI |
-| --- | --- | --- |
-| latency | < 5s | 10-60s |
-| context | ~200K | ~1M+ |
-| tools (file read 等) | 自分で書く | 内蔵 |
-| cost | 普通 | OAuth subscription 利用なら subscription 内 |
-| reliability | API 直 | subprocess の起動コスト |
+OpenAI Codex CLI (`codex exec`) を使う provider。Claude Code subscription や Anthropic API key がない customer hosting、OpenAI billing のみで運用したい環境、provider 比較・fallback 実験で使います。`codex exec --skip-git-repo-check --sandbox workspace-write -` を execa で起動し、system prompt と user prompt を `system\n\n---\n\nuser` の形で stdin に渡します。stdout の最終 text が response で、token usage は CLI から取れないため `{ input: 0, output: 0 }` を記録します。
 
-軽量 + 頻繁 → SDK / 重い思考 → CLI が住み分け。
+### 3.4 LLM_BACKEND
+
+`LLM_BACKEND` は `auto | claude_code | anthropic | codex`。default は `auto` です。
+
+| value | behavior |
+| --- | --- |
+| auto | 既存の `KIND_PROVIDER` mapping を使う。Anthropic key があれば anthropic provider を登録し、`codex --version` が通れば codex provider も登録する |
+| claude_code | 全 kind を `claude_code` に override |
+| anthropic | 全 kind を `anthropic` に override。key がなければ bridge fallback で `claude_code` |
+| codex | 全 kind を `codex` に override。Codex CLI がなければ bridge fallback で `claude_code` |
+
+### 3.5 なぜ 3 系統か
+
+| 観点 | anthropic SDK | claude-code CLI | codex CLI |
+| --- | --- | --- | --- |
+| latency | < 5s | 10-60s | 10-60s |
+| context | ~200K | CLI/model 依存 | CLI/model 依存 |
+| tools (file read 等) | 自分で書く | 内蔵 | CLI sandbox 内 |
+| cost | Anthropic API billing | Claude Code subscription / login | OpenAI billing / Codex login |
+| reliability | API 直 | subprocess の起動コスト | subprocess の起動コスト |
+
+軽量 + 頻繁 → SDK / 重い思考 → CLI が基本の住み分け。provider 強制は `LLM_BACKEND` で行います。
 
 ## 4. prompt caching の実装
 

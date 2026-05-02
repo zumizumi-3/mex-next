@@ -196,6 +196,7 @@ describe('submitPhaseAnswers — synthesize', () => {
       operatorDiscordUserIds: ['oper-1'],
       githubToken: undefined,
       logLevel: 'info',
+      llmBackend: 'auto',
       pendingTurnStorePath: `${scaf.workDir}/pending.json`,
       sessionStorePath: `${scaf.workDir}/sessions.json`,
       approvalStorePath: `${scaf.workDir}/approvals.jsonl`,

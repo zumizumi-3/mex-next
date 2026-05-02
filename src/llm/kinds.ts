@@ -97,7 +97,7 @@ export const KIND_MAX_TOKENS: Record<LlmKind, number> = {
   phase_questionnaire_synthesize: 2_000,
 };
 
-export type LlmProviderName = 'anthropic' | 'claude_code';
+export type LlmProviderName = 'anthropic' | 'claude_code' | 'codex';
 
 /**
  * Which provider serves each kind.

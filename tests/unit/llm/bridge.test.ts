@@ -116,6 +116,41 @@ describe('createBridge', () => {
     expect(claudeCode.calls).toHaveLength(0);
   });
 
+  it('routes to codex when providerOverrides selects codex and provider exists', async () => {
+    const anthropic = makeRecordingProvider('anthropic');
+    const claudeCode = makeRecordingProvider('claude_code');
+    const codex = makeRecordingProvider('codex');
+    const bridge = createBridge({
+      anthropic,
+      claudeCode,
+      codex,
+      providerOverrides: { post_v2_generate: 'codex' },
+    });
+
+    const result = await bridge.call({ kind: 'post_v2_generate', userPrompt: 'x' });
+
+    expect(result.text).toBe('codex-response');
+    expect(codex.calls).toHaveLength(1);
+    expect(claudeCode.calls).toHaveLength(0);
+    expect(anthropic.calls).toHaveLength(0);
+  });
+
+  it('falls through to claude_code when codex override is requested but absent', async () => {
+    const anthropic = makeRecordingProvider('anthropic');
+    const claudeCode = makeRecordingProvider('claude_code');
+    const bridge = createBridge({
+      anthropic,
+      claudeCode,
+      providerOverrides: { post_v2_generate: 'codex' },
+    });
+
+    const result = await bridge.call({ kind: 'post_v2_generate', userPrompt: 'x' });
+
+    expect(result.text).toBe('claude_code-response');
+    expect(claudeCode.calls).toHaveLength(1);
+    expect(anthropic.calls).toHaveLength(0);
+  });
+
   it('fills system prompt, max_tokens, timeoutMs from kind metadata', async () => {
     const anthropic = makeRecordingProvider('anthropic');
     const claudeCode = makeRecordingProvider('claude_code');
@@ -162,7 +197,7 @@ describe('fillDefaults', () => {
 
   it('every kind has a system prompt and provider mapping', () => {
     for (const [kind, provider] of Object.entries(KIND_PROVIDER)) {
-      expect(provider).toMatch(/^(anthropic|claude_code)$/);
+      expect(provider).toMatch(/^(anthropic|claude_code|codex)$/);
       expect(KIND_SYSTEM_PROMPT[kind as keyof typeof KIND_SYSTEM_PROMPT]).toBeTruthy();
     }
   });

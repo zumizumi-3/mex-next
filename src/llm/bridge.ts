@@ -3,7 +3,7 @@
  *
  * Every call site (intent classify, draft generate, quality judge,
  * retrospective, etc.) goes through `LlmProvider.call(opts)`. The bridge
- * dispatches to a concrete provider (`anthropic` or `claude_code`) based
+ * dispatches to a concrete provider (`anthropic`, `claude_code`, or `codex`) based
  * on `KIND_PROVIDER`.
  *
  * Why two providers?
@@ -76,6 +76,11 @@ export interface LlmBridgeConfig {
    */
   anthropic?: LlmProvider;
   claudeCode: LlmProvider;
+  /**
+   * Codex CLI provider. Optional — when omitted, kinds overridden to codex
+   * fall back to claudeCode.
+   */
+  codex?: LlmProvider;
   /** Optional: override KIND_PROVIDER for tests / experimental routing. */
   providerOverrides?: Partial<Record<LlmKind, LlmProviderName>>;
   /**
@@ -164,9 +169,15 @@ export function createBridge(config: LlmBridgeConfig): LlmProvider {
     async call(opts: LlmCallOptions): Promise<LlmResponse> {
       const overridden = config.providerOverrides?.[opts.kind];
       const providerName = overridden ?? KIND_PROVIDER[opts.kind];
-      // Fallback: if anthropic is requested but not configured, route to claudeCode.
-      const provider =
-        providerName === 'anthropic' && config.anthropic ? config.anthropic : config.claudeCode;
+      // Fallback: if the requested provider is not configured, route to claudeCode.
+      let provider: LlmProvider;
+      if (providerName === 'codex' && config.codex) {
+        provider = config.codex;
+      } else if (providerName === 'anthropic' && config.anthropic) {
+        provider = config.anthropic;
+      } else {
+        provider = config.claudeCode;
+      }
       const filled = fillDefaults(opts);
 
       const invoke = (): Promise<LlmResponse> => provider.call(filled);

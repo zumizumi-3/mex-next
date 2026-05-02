@@ -20,7 +20,7 @@
  *   we'd switch this provider to `--output-format stream-json`.
  */
 
-import { execa, type ExecaError, type ResultPromise } from 'execa';
+import { execa, type ExecaError } from 'execa';
 
 import {
   LlmProviderError,
@@ -43,6 +43,10 @@ export interface ClaudeCodeProviderConfig {
    * Defaults to `[]` so tests don't need to know production knobs.
    */
   extraArgs?: readonly string[];
+  /** Working directory for the subprocess. Defaults to process.cwd(). */
+  cwd?: string;
+  /** Optional inherited environment tweaks. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -52,8 +56,13 @@ export interface ClaudeCodeProviderConfig {
 export type ExecaRunner = (
   binary: string,
   args: readonly string[],
-  options?: { input?: string; timeout?: number },
-) => ResultPromise<{ encoding: 'utf8' }>;
+  options?: {
+    input?: string;
+    timeout?: number;
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+) => Promise<{ stdout: string; stderr: string; exitCode?: number }>;
 
 const DEFAULT_BINARY = 'claude';
 
@@ -63,6 +72,7 @@ export function createClaudeCodeProvider(
   const binary = config.binaryPath ?? DEFAULT_BINARY;
   const runner: ExecaRunner = (config.runner ?? (execa as unknown as ExecaRunner));
   const extraArgs = config.extraArgs ?? [];
+  const cwd = config.cwd ?? process.cwd();
 
   return {
     async call(opts: LlmCallOptions): Promise<LlmResponse> {
@@ -89,7 +99,12 @@ export function createClaudeCodeProvider(
 
       let result: { stdout: string; stderr: string; exitCode?: number };
       try {
-        const promise = runner(binary, args, { input: userPrompt, timeout: timeoutMs });
+        const promise = runner(binary, args, {
+          input: userPrompt,
+          timeout: timeoutMs,
+          cwd,
+          ...(config.env ? { env: config.env } : {}),
+        });
         result = (await withTimeout(
           // execa returns a ResultPromise that resolves to a result object with stdout/stderr;
           // cast at the boundary because the static execa typing varies between option permutations.
