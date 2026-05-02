@@ -72,17 +72,47 @@ function computeExpiresAt(createdAt: string, ttlHours: number): string {
 /**
  * Pure helper: write a session into a NEW StateJson object. We never
  * mutate the input state.
+ *
+ * Supports both representations of `state.posting_sessions`:
+ *  - array (current persisted form, after schema-migration)
+ *  - record (legacy / Python form — still accepted for in-process tests)
+ *
+ * Output always preserves the input's container type to keep the on-
+ * disk shape stable. Empty / missing → array, matching the schema.
  */
 function upsertSession(state: StateJson, session: PostingSession): StateJson {
-  const sessions = (state.posting_sessions as Record<string, unknown> | undefined) ?? {};
+  const current = state.posting_sessions as unknown;
+  if (Array.isArray(current)) {
+    const replaced = current.some(
+      (item) => item && typeof item === 'object' && (item as { id?: string }).id === session.id,
+    );
+    const next = replaced
+      ? current.map((item) =>
+          item && typeof item === 'object' && (item as { id?: string }).id === session.id
+            ? session
+            : item,
+        )
+      : [...current, session];
+    return { ...state, posting_sessions: next as unknown as Record<string, unknown> };
+  }
+  const sessions = (current as Record<string, unknown> | undefined) ?? {};
   const nextSessions: Record<string, unknown> = { ...sessions, [session.id]: session };
   return { ...state, posting_sessions: nextSessions };
 }
 
 function readSession(state: StateJson, sessionId: string): PostingSession | undefined {
-  const sessions = state.posting_sessions as Record<string, unknown> | undefined;
-  if (!sessions) return undefined;
-  const raw = sessions[sessionId];
+  const sessions = state.posting_sessions as unknown;
+  if (Array.isArray(sessions)) {
+    for (const entry of sessions) {
+      if (!entry || typeof entry !== 'object') continue;
+      if ((entry as { id?: string }).id === sessionId) {
+        return entry as PostingSession;
+      }
+    }
+    return undefined;
+  }
+  if (!sessions || typeof sessions !== 'object') return undefined;
+  const raw = (sessions as Record<string, unknown>)[sessionId];
   if (!raw || typeof raw !== 'object') return undefined;
   return raw as PostingSession;
 }
@@ -336,23 +366,39 @@ export class PostingStateMachine {
     const expired: PostingSession[] = [];
 
     await this.repo.withState(async (state) => {
-      const sessions = (state.posting_sessions as Record<string, unknown> | undefined) ?? {};
-      const nextSessions: Record<string, unknown> = { ...sessions };
+      const current = state.posting_sessions as unknown;
 
-      for (const [id, raw] of Object.entries(sessions)) {
-        if (!raw || typeof raw !== 'object') continue;
+      const transitionOne = (raw: unknown, fallbackId?: string): unknown => {
+        if (!raw || typeof raw !== 'object') return raw;
         const s = raw as PostingSession;
-        if (TERMINAL_STATES.has(s.state)) continue;
+        if (TERMINAL_STATES.has(s.state)) return raw;
         const exp = Date.parse(s.expiresAt);
-        if (Number.isNaN(exp) || exp > now) continue;
+        if (Number.isNaN(exp) || exp > now) return raw;
         // Force-transition to `expired`. We bypass `assertTransition`
         // because `expired` is a system-driven escape hatch reachable
         // from any active state.
-        const moved: PostingSession = { ...s, state: 'expired', updatedAt: this.nowIso() };
-        nextSessions[id] = moved;
+        const moved: PostingSession = {
+          ...s,
+          id: s.id ?? fallbackId ?? '',
+          state: 'expired',
+          updatedAt: this.nowIso(),
+        };
         expired.push(moved);
-      }
+        return moved;
+      };
 
+      if (Array.isArray(current)) {
+        const next = current.map((entry) => transitionOne(entry));
+        return {
+          state: { ...state, posting_sessions: next as unknown as Record<string, unknown> },
+          result: undefined,
+        };
+      }
+      const sessions = (current as Record<string, unknown> | undefined) ?? {};
+      const nextSessions: Record<string, unknown> = { ...sessions };
+      for (const [id, raw] of Object.entries(sessions)) {
+        nextSessions[id] = transitionOne(raw, id);
+      }
       return { state: { ...state, posting_sessions: nextSessions }, result: undefined };
     });
 

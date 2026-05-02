@@ -21,7 +21,10 @@ export type LlmKind =
   | 'periodic_retrospective_generate'
   | 'periodic_retrospective_apply'
   | 'plan_writeback_diff'
-  | 'plan_writeback_apply';
+  | 'plan_writeback_apply'
+  | 'content_seeding_topics'
+  | 'initial_training_reverse'
+  | 'phase_questionnaire_synthesize';
 
 export interface LlmCallInput {
   kind: LlmKind;

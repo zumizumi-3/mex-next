@@ -39,6 +39,10 @@ export const SUPPORTED_INTENT_NAMES: readonly string[] = [
   'onboard.start',
   'onboard.status',
   'onboard.cancel',
+  'seed.run',
+  'training.run',
+  'phase.questionnaire_start',
+  'phase.questionnaire_status',
   'unknown',
 ] as const;
 
@@ -60,6 +64,10 @@ const INTENT_ARG_SCHEMA_LINES = [
   'onboard.start = no args',
   'onboard.status = no args',
   'onboard.cancel = no args',
+  'seed.run = {count?: number (1-13), approve_all?: boolean, topics?: string[]}',
+  'training.run = {count?: number (5-200)}',
+  "phase.questionnaire_start = {cadence?: 'weekly'|'monthly'|'quarterly'}",
+  "phase.questionnaire_status = {cadence?: 'weekly'|'monthly'|'quarterly', session_id?: string}",
   'unknown = no args (use this when the request is unclear)',
 ];
 
@@ -319,6 +327,38 @@ export const QUOTE_EDIT_SYSTEM = [
   'Return only a JSON object with keys: text, applied_instruction, change_summary, voice_check.',
 ].join('\n');
 
+export const CONTENT_SEEDING_TOPICS_SYSTEM = [
+  'You generate diverse seed topics for a Japanese X account starting fresh.',
+  'Read payload.active_window (expertise / authority / worldview / human_priority) and ' +
+    'payload.brand to understand the account voice. Read payload.recent_topics to avoid repeats.',
+  'Output exactly payload.count topics. Vary the angle: include expertise demos, personal ' +
+    'experience, authority signals, hot-take/contrarian, vulnerable share, technique tips, ' +
+    'and inquiry hooks. Topics should be specific (1 sentence, 12-30 Japanese characters).',
+  'Return only a JSON object with key: topics (array of strings).',
+].join('\n');
+
+export const INITIAL_TRAINING_REVERSE_SYSTEM = [
+  'You reverse-engineer a Japanese X post into the prompt-stage that would have produced it.',
+  'Given payload.tweet_text, infer:',
+  '  - theme: the subject area (12-30 Japanese characters)',
+  '  - intent: what the author was trying to convey (1 short sentence)',
+  '  - origin: the kicker / experience / observation that prompted it (1 short sentence)',
+  '  - draft_seed: a plausible "first draft" version a beginner would have written ' +
+    '(less polished, same gist, plain prose). This is the target for edit-diff exemplar.',
+  'Return only a JSON object with keys: theme, intent, origin, draft_seed.',
+].join('\n');
+
+export const PHASE_QUESTIONNAIRE_SYNTHESIZE_SYSTEM = [
+  'You synthesize a phase questionnaire result for an X account operator.',
+  'Read payload.cadence (weekly | monthly | quarterly), payload.questions (id, prompt), and ' +
+    'payload.answers (id → free text). Identify:',
+  '  - summary: 2-4 sentence overview of customer satisfaction / pain / direction',
+  '  - signals: array of {axis, observation} where axis is one of ' +
+    '["satisfaction","pain","wins","direction","operator_action_required"]',
+  '  - recommended_actions: 1-5 concrete next steps the operator should consider',
+  'Return only a JSON object with keys: summary, signals, recommended_actions.',
+].join('\n');
+
 /**
  * Single source of truth: kind → system prompt.
  *
@@ -339,4 +379,7 @@ export const KIND_SYSTEM_PROMPT: Record<LlmKind, string> = {
   periodic_retrospective_apply: RETROSPECTIVE_SYSTEM,
   plan_writeback_diff: PLAN_WRITEBACK_DIFF_SYSTEM,
   plan_writeback_apply: PLAN_WRITEBACK_APPLY_SYSTEM,
+  content_seeding_topics: CONTENT_SEEDING_TOPICS_SYSTEM,
+  initial_training_reverse: INITIAL_TRAINING_REVERSE_SYSTEM,
+  phase_questionnaire_synthesize: PHASE_QUESTIONNAIRE_SYNTHESIZE_SYSTEM,
 };

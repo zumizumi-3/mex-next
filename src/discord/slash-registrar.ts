@@ -205,6 +205,105 @@ const MEX_COMMAND: ApplicationCommandData = {
       ],
     },
     {
+      type: ApplicationCommandOptionType.SubcommandGroup,
+      name: 'seed',
+      description: 'コンテンツ seeding',
+      options: [
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'run',
+          description: 'N 本のドラフトを一気に生成',
+          options: [
+            {
+              type: ApplicationCommandOptionType.Integer,
+              name: 'count',
+              description: '生成本数 (1-13、既定 7)',
+              required: false,
+              minValue: 1,
+              maxValue: 13,
+            },
+            {
+              type: ApplicationCommandOptionType.Boolean,
+              name: 'approve_all',
+              description: '全件 schedule に流す',
+              required: false,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      type: ApplicationCommandOptionType.SubcommandGroup,
+      name: 'training',
+      description: '初期学習',
+      options: [
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'run',
+          description: '過去投稿から exemplar を蓄積',
+          options: [
+            {
+              type: ApplicationCommandOptionType.Integer,
+              name: 'count',
+              description: '取り込み本数 (5-200、既定 50)',
+              required: false,
+              minValue: 5,
+              maxValue: 200,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      type: ApplicationCommandOptionType.SubcommandGroup,
+      name: 'phase',
+      description: 'フェーズ アンケート',
+      options: [
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'start',
+          description: 'アンケート開始',
+          options: [
+            {
+              type: ApplicationCommandOptionType.String,
+              name: 'cadence',
+              description: '頻度',
+              required: false,
+              choices: [
+                { name: '週次', value: 'weekly' },
+                { name: '月次', value: 'monthly' },
+                { name: '四半期', value: 'quarterly' },
+              ],
+            },
+          ],
+        },
+        {
+          type: ApplicationCommandOptionType.Subcommand,
+          name: 'status',
+          description: 'アンケート状況',
+          options: [
+            {
+              type: ApplicationCommandOptionType.String,
+              name: 'cadence',
+              description: '頻度で絞り込み',
+              required: false,
+              choices: [
+                { name: '週次', value: 'weekly' },
+                { name: '月次', value: 'monthly' },
+                { name: '四半期', value: 'quarterly' },
+              ],
+            },
+            {
+              type: ApplicationCommandOptionType.String,
+              name: 'session_id',
+              description: 'セッション ID で詳細',
+              required: false,
+            },
+          ],
+        },
+      ],
+    },
+    {
       type: ApplicationCommandOptionType.Subcommand,
       name: 'status',
       description: 'status を表示',
@@ -304,6 +403,12 @@ export function commandToIntent(
   if (group === 'cadence') {
     if (subcommand === 'skip-today') return 'cadence.skip_today';
     if (subcommand === 'set') return 'cadence.set'; // resolved by caller using the `profile` option
+  }
+  if (group === 'seed' && subcommand === 'run') return 'seed.run';
+  if (group === 'training' && subcommand === 'run') return 'training.run';
+  if (group === 'phase') {
+    if (subcommand === 'start') return 'phase.questionnaire_start';
+    if (subcommand === 'status') return 'phase.questionnaire_status';
   }
   return 'unknown';
 }

@@ -27,6 +27,13 @@ import {
   handleOnboardStatus,
   handleOnboardCancel,
 } from './onboarding.js';
+import { handleSeedRun } from './seeding.js';
+import { handleTrainingRun } from './training.js';
+import {
+  handlePhaseQuestionnaireStart,
+  handlePhaseQuestionnaireStatus,
+  handlePhaseQuestionnaireSubmit,
+} from './phase.js';
 import type { Handler, HandlersMap } from './types.js';
 
 export type { HandlerContext, HandlerResult, HandlerArgs, Handler, HandlersMap } from './types.js';
@@ -48,6 +55,11 @@ export {
   handleOnboardStart,
   handleOnboardStatus,
   handleOnboardCancel,
+  handleSeedRun,
+  handleTrainingRun,
+  handlePhaseQuestionnaireStart,
+  handlePhaseQuestionnaireStatus,
+  handlePhaseQuestionnaireSubmit,
 };
 
 /**
@@ -76,6 +88,11 @@ export function buildHandlers(): HandlersMap {
     'onboard.start': handleOnboardStart,
     'onboard.status': handleOnboardStatus,
     'onboard.cancel': handleOnboardCancel,
+    'seed.run': handleSeedRun,
+    'training.run': handleTrainingRun,
+    'phase.questionnaire_start': handlePhaseQuestionnaireStart,
+    'phase.questionnaire_status': handlePhaseQuestionnaireStatus,
+    'phase.questionnaire_submit': handlePhaseQuestionnaireSubmit,
     unknown: handleUnknown,
   };
   return map;
