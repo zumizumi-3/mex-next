@@ -100,4 +100,6 @@ export interface AccountRepo {
    * a NEW state object — never mutate `state` in place (immutability).
    */
   withState<T>(mutator: (state: StateJson) => Promise<{ state: StateJson; result: T }>): Promise<T>;
+  /** Optional concrete repo hook used after exemplar markdown writes. */
+  writeKnowledgeFiles?(account: AccountJson): Promise<void>;
 }

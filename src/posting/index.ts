@@ -45,6 +45,12 @@ export {
 } from './candidate.js';
 
 export { computeEditDiff, type DiffHunk, type EditDiff } from './edit-diff.js';
+export {
+  ExemplarWriter,
+  type ExemplarRecord,
+  type ExemplarWriterDeps,
+  type RecentExemplar,
+} from './exemplar-writer.js';
 
 export { buildContextIndex, type ContextIndex, type ContextIndexExemplar } from './context-index.js';
 

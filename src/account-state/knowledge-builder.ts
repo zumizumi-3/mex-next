@@ -1,5 +1,14 @@
 import type { AccountJson, HotZone } from './account-schema.js';
 
+export interface KnowledgeBuildOptions {
+  readonly recentExemplars?: ReadonlyArray<{
+    readonly id: string;
+    readonly topic: string;
+    readonly createdAt: string;
+    readonly relativePath: string;
+  }>;
+}
+
 export interface KnowledgeFiles {
   readonly 'AGENTS.md': string;
   readonly 'CLAUDE.md': string;
@@ -55,7 +64,7 @@ const PERSONA_ARCHETYPES: Record<string, { label: string; tagline: string }> = {
   },
 };
 
-export function buildKnowledgeFiles(account: AccountJson): KnowledgeFiles {
+export function buildKnowledgeFiles(account: AccountJson, opts: KnowledgeBuildOptions = {}): KnowledgeFiles {
   const accountId = text(account.account_id);
   const displayName = text(account.display_name) || accountId || DASH;
   const xHandle = normalizeHandle(valueAt(account, 'x_handle') ?? valueAt(account, 'x_username'));
@@ -68,6 +77,8 @@ export function buildKnowledgeFiles(account: AccountJson): KnowledgeFiles {
   const cadenceProfile = text(account.operating_cadence?.profile);
   const hotZones = hotZoneItems(account.operating_cadence?.hot_zones);
   const targets = targetRows(account);
+
+  const exemplarSection = buildExemplarSection(opts.recentExemplars ?? []);
 
   const agents = withFinalNewline(`# AGENTS.md — ${accountId || DASH}
 
@@ -105,7 +116,7 @@ export function buildKnowledgeFiles(account: AccountJson): KnowledgeFiles {
 5. 修正履歴は exemplars/ にあるので、似た過去の修正パターンを再現しない。
 
 ## state.json / account.json は触らない
-これらは bot が runtime で読み書きする。手で編集しないこと。markdown 側の変更は bot が次回 finalize 時に上書きする。`);
+これらは bot が runtime で読み書きする。手で編集しないこと。markdown 側の変更は bot が次回 finalize 時に上書きする。${exemplarSection}`);
 
   return {
     'AGENTS.md': agents,
@@ -116,6 +127,31 @@ export function buildKnowledgeFiles(account: AccountJson): KnowledgeFiles {
     'targets.md': buildTargetsMarkdown(displayName, targets),
     'README.md': buildReadmeMarkdown(accountId || DASH),
   };
+}
+
+function buildExemplarSection(
+  exemplars: ReadonlyArray<{
+    readonly topic: string;
+    readonly createdAt: string;
+    readonly relativePath: string;
+  }>,
+): string {
+  if (exemplars.length === 0) return '';
+  const lines = exemplars.map((exemplar) => {
+    const topic = text(exemplar.topic) || basenameWithoutExt(exemplar.relativePath) || DASH;
+    const createdAt = text(exemplar.createdAt) || DASH;
+    const path = exemplar.relativePath.startsWith('./')
+      ? exemplar.relativePath
+      : `./${exemplar.relativePath}`;
+    return `- [${topic}](${path}) (${createdAt})`;
+  });
+  return `
+
+## 学習素材 (exemplars)
+
+過去の draft → 顧客修正の差分が markdown で残っています。投稿案を作る時は **直近の修正パターンを再現しないこと**:
+
+${lines.join('\n')}`;
 }
 
 function buildPersonaMarkdown(
@@ -233,6 +269,11 @@ function buildReadmeMarkdown(accountId: string): string {
 ## 使い方
 - 顧客側で触る場面はありません。Discord で \`/mex\` または bot にメンションしてください。
 - 何かを変えたい時は markdown を直接編集するのではなく、bot に話しかけて反映を依頼してください。`);
+}
+
+function basenameWithoutExt(path: string): string {
+  const last = path.split('/').pop() ?? '';
+  return last.replace(/\.md$/i, '');
 }
 
 function personaKnowledge(account: AccountJson): PersonaKnowledge {

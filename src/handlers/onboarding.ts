@@ -235,6 +235,7 @@ async function bootstrapFirstDraft(ctx: HandlerContext): Promise<FirstDraftOutco
     repo: asPostingMachineRepo(ctx.repo),
     bridge: adaptBridgeForPosting(ctx),
     logger: ctx.logger,
+    ...(ctx.exemplarWriter ? { exemplarWriter: ctx.exemplarWriter } : {}),
   });
 
   let session;

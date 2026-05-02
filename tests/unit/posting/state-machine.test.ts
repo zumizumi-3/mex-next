@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PostingStateMachine } from '../../../src/posting/state-machine.js';
+import type { ExemplarWriter } from '../../../src/posting/exemplar-writer.js';
 import type { AccountJson, AccountRepo, LlmProvider, StateJson } from '../../../src/posting/types.js';
 
 /**
@@ -123,6 +124,105 @@ describe('PostingStateMachine — happy path', () => {
     await sm.validateCurrent(s.id);
     const result = await sm.applyDecision(s.id, 'revise');
     expect(result.state).toBe('revising');
+  });
+});
+
+describe('PostingStateMachine — edit-diff exemplars', () => {
+  it('writes an exemplar on schedule when current text differs from the previous candidate', async () => {
+    const repo = makeFakeRepo({
+      account: ACCOUNT,
+      state: {
+        publish_queue: [],
+        posting_sessions: {
+          psn_test: {
+            id: 'psn_test',
+            state: 'awaiting_decision',
+            topic: 'Morning Routine',
+            candidates: [
+              {
+                id: 'cand_1',
+                text: '朝はまず予定を見る。',
+                topic: 'Morning Routine',
+                createdAt: '2026-05-03T00:00:00.000Z',
+                status: 'draft',
+              },
+              {
+                id: 'cand_2',
+                text: '朝はまず予定を見て、手順を決める。',
+                topic: 'Morning Routine',
+                createdAt: '2026-05-03T00:01:00.000Z',
+                status: 'draft',
+              },
+            ],
+            currentCandidateIndex: 1,
+            createdAt: '2026-05-03T00:00:00.000Z',
+            updatedAt: '2026-05-03T00:01:00.000Z',
+            expiresAt: '2026-05-04T00:00:00.000Z',
+          },
+        },
+      },
+    });
+    const bridge = makeBridge('unused');
+    const write = vi.fn(async (_record: unknown) => ({ path: '/tmp/exemplar.md' }));
+    const sm = new PostingStateMachine({
+      repo,
+      bridge,
+      exemplarWriter: { write } as unknown as Pick<ExemplarWriter, 'write'>,
+    });
+
+    await sm.applyDecision('psn_test', 'schedule');
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write.mock.calls[0]?.[0]).toMatchObject({
+      topic: 'Morning Routine',
+      original: '朝はまず予定を見る。',
+      final: '朝はまず予定を見て、手順を決める。',
+    });
+    const state = repo.inspect().state as { exemplars?: unknown[] };
+    expect(state.exemplars).toHaveLength(1);
+  });
+
+  it('does not write an exemplar when original and final text are the same', async () => {
+    const repo = makeFakeRepo({
+      account: ACCOUNT,
+      state: {
+        publish_queue: [],
+        posting_sessions: {
+          psn_test: {
+            id: 'psn_test',
+            state: 'awaiting_decision',
+            topic: 'Morning Routine',
+            candidates: [
+              {
+                id: 'cand_1',
+                text: '朝はまず予定を見る。',
+                topic: 'Morning Routine',
+                createdAt: '2026-05-03T00:00:00.000Z',
+                status: 'draft',
+                meta: { originalText: '朝はまず予定を見る。' },
+              },
+            ],
+            currentCandidateIndex: 0,
+            createdAt: '2026-05-03T00:00:00.000Z',
+            updatedAt: '2026-05-03T00:01:00.000Z',
+            expiresAt: '2026-05-04T00:00:00.000Z',
+          },
+        },
+      },
+    });
+    const bridge = makeBridge('unused');
+    const write = vi.fn(async (_record: unknown) => ({ path: '/tmp/exemplar.md' }));
+    const sm = new PostingStateMachine({
+      repo,
+      bridge,
+      exemplarWriter: { write } as unknown as Pick<ExemplarWriter, 'write'>,
+    });
+
+    await sm.applyDecision('psn_test', 'schedule');
+
+    expect(write).not.toHaveBeenCalled();
+    const state = repo.inspect().state as { exemplars?: unknown[] };
+    expect(state.exemplars).toBeUndefined();
   });
 });
 

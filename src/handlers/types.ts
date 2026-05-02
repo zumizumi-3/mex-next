@@ -15,6 +15,7 @@ import type { AccountRepo } from '../account-state/repo.js';
 import type { XApiSurface } from '../x-api/types.js';
 import type { DiscordPoster } from '../posting/collectors/types.js';
 import type { JudgmentEventStream } from '../observability/judgment-events.js';
+import type { ExemplarWriter } from '../posting/exemplar-writer.js';
 
 export interface HandlerContext {
   readonly accountId: string;
@@ -41,6 +42,7 @@ export interface HandlerContext {
    * decision worth replaying.
    */
   readonly judgmentEvents?: JudgmentEventStream;
+  readonly exemplarWriter?: ExemplarWriter;
 }
 
 export interface HandlerResult {

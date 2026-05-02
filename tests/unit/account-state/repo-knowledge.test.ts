@@ -51,4 +51,28 @@ describe('AccountRepo.writeKnowledgeFiles', () => {
       'chore(knowledge): regenerate AGENTS / CLAUDE / persona / brand / targets',
     );
   });
+
+  it('passes recent exemplars into generated AGENTS.md', async () => {
+    workDir = await mkdtemp(join(tmpdir(), 'mex-repo-knowledge-'));
+    await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+    await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+    const repo = new AccountRepo(workDir, {
+      exemplarWriter: {
+        listRecent: vi.fn(async () => [
+          {
+            id: 'exm_01',
+            topic: '修正例',
+            createdAt: '2026-05-03T00:00:00.000Z',
+            relativePath: 'exemplars/2026-05-03-example.md',
+          },
+        ]),
+      },
+    });
+
+    await repo.writeKnowledgeFiles(AccountJsonSchema.parse({ account_id: 'zumi-x' }));
+
+    const agents = await readFile(join(workDir, 'AGENTS.md'), 'utf-8');
+    expect(agents).toContain('## 学習素材 (exemplars)');
+    expect(agents).toContain('[修正例](./exemplars/2026-05-03-example.md)');
+  });
 });

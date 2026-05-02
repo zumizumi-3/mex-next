@@ -24,6 +24,7 @@ import { migrateAccount, migrateState, type MigrationResult } from './schema-mig
 import { buildKnowledgeFiles } from './knowledge-builder.js';
 import type { GitSync } from './git-sync.js';
 import type { Logger } from 'pino';
+import type { ExemplarWriter, RecentExemplar } from '../posting/exemplar-writer.js';
 
 /**
  * Identifier whitelist. Allowed: ASCII letters, digits, underscore, hyphen.
@@ -98,16 +99,24 @@ export interface WithStateResult<T> {
   result: T;
 }
 
+interface AccountRepoOptions {
+  readonly gitSync?: GitSync;
+  readonly logger?: Logger;
+  readonly exemplarWriter?: Pick<ExemplarWriter, 'listRecent'>;
+}
+
 export class AccountRepo {
   private readonly gitSync?: GitSync;
   private readonly logger?: Logger;
+  private readonly exemplarWriter?: Pick<ExemplarWriter, 'listRecent'>;
 
   constructor(
     private readonly path: string,
-    opts: { gitSync?: GitSync; logger?: Logger } = {},
+    opts: AccountRepoOptions = {},
   ) {
     this.gitSync = opts.gitSync;
     this.logger = opts.logger;
+    this.exemplarWriter = opts.exemplarWriter;
   }
 
   /** account-state/types.ts の `AccountRepo` interface 互換 (posting/settings module で参照される). */
@@ -243,13 +252,27 @@ export class AccountRepo {
    * and Claude Code auto-load current customer context from their cwd.
    */
   async writeKnowledgeFiles(account: AccountJson): Promise<void> {
-    const files = buildKnowledgeFiles(account);
+    const recentExemplars = await this.listRecentExemplarsForKnowledge();
+    const files = buildKnowledgeFiles(account, { recentExemplars });
     await Promise.all(
       Object.entries(files).map(([name, content]) =>
         fs.writeFile(join(this.path, name), content, 'utf-8'),
       ),
     );
     this.syncMutation('chore(knowledge): regenerate AGENTS / CLAUDE / persona / brand / targets');
+  }
+
+  private async listRecentExemplarsForKnowledge(): Promise<ReadonlyArray<RecentExemplar>> {
+    if (!this.exemplarWriter) return [];
+    try {
+      return await this.exemplarWriter.listRecent(20);
+    } catch (err) {
+      this.logger?.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'knowledge_exemplar_list_failed',
+      );
+      return [];
+    }
   }
 
   /** Compat alias for writers using `saveState`. */

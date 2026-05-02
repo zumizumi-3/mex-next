@@ -32,6 +32,8 @@ import { type Candidate, validateCandidate } from './candidate.js';
 import { buildContextIndex, type ContextIndex } from './context-index.js';
 import { generateDraft } from './draft-generation.js';
 import { judgeQuality } from './quality-judge.js';
+import { computeEditDiff } from './edit-diff.js';
+import type { ExemplarRecord, ExemplarWriter } from './exemplar-writer.js';
 
 /** Customer decision on a draft. */
 export type PostingDecision = 'schedule' | 'revise' | 'reject';
@@ -127,6 +129,76 @@ function transition(session: PostingSession, to: PostingState): PostingSession {
   return { ...session, state: to, updatedAt: nowIso() };
 }
 
+function buildDecisionExemplarRecord(
+  session: PostingSession,
+  decision: Extract<PostingDecision, 'schedule' | 'revise'>,
+  createdAt: string,
+): ExemplarRecord | undefined {
+  const current = session.candidates[session.currentCandidateIndex];
+  if (!current) return undefined;
+  const original = originalTextFor(session, current);
+  const final = finalTextFor(current);
+  if (!original || !final) return undefined;
+  const diff = computeEditDiff(original, final);
+  if (diff.summary.noop) return undefined;
+  const topic = current.topic || session.topic || current.id;
+  return {
+    id: `exm_${ulid()}`,
+    createdAt,
+    topic,
+    original,
+    final,
+    diff,
+    note: decision === 'schedule' ? 'scheduled final differs from prior draft' : 'revise requested after draft change',
+  };
+}
+
+function originalTextFor(session: PostingSession, current: Candidate): string {
+  const meta = current.meta ?? {};
+  const fromMeta =
+    stringMeta(meta, 'original') ||
+    stringMeta(meta, 'originalText') ||
+    stringMeta(meta, 'original_draft') ||
+    stringMeta(meta, 'botDraft');
+  if (fromMeta) return fromMeta;
+  const previous = session.currentCandidateIndex > 0
+    ? session.candidates[session.currentCandidateIndex - 1]
+    : undefined;
+  return previous?.text ?? '';
+}
+
+function finalTextFor(current: Candidate): string {
+  const meta = current.meta ?? {};
+  return (
+    stringMeta(meta, 'final') ||
+    stringMeta(meta, 'finalText') ||
+    stringMeta(meta, 'final_text') ||
+    current.text ||
+    ''
+  );
+}
+
+function stringMeta(meta: Record<string, unknown>, key: string): string {
+  const value = meta[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function appendStateExemplar(state: StateJson, record: ExemplarRecord): StateJson {
+  const current = Array.isArray((state as { exemplars?: unknown }).exemplars)
+    ? ((state as { exemplars?: unknown[] }).exemplars ?? [])
+    : [];
+  const compact = {
+    id: record.id,
+    createdAt: record.createdAt,
+    topic: record.topic,
+    original: record.original,
+    final: record.final,
+    diff: record.diff,
+    note: record.note,
+  };
+  return { ...state, exemplars: [...current, compact] };
+}
+
 export interface PostingStateMachineOptions {
   repo: AccountRepo;
   bridge: LlmProvider;
@@ -140,6 +212,7 @@ export interface PostingStateMachineOptions {
    * a JudgmentEventStream from main.ts so judgments are auditable.
    */
   onQualityJudged?: (info: { sessionId: string; pass: boolean; axes: Record<string, number> }) => void;
+  exemplarWriter?: Pick<ExemplarWriter, 'write'>;
 }
 
 /**
@@ -153,6 +226,7 @@ export class PostingStateMachine {
   private readonly ttlHours: number;
   private readonly clock: () => Date;
   private readonly onQualityJudged: PostingStateMachineOptions['onQualityJudged'];
+  private readonly exemplarWriter?: Pick<ExemplarWriter, 'write'>;
 
   constructor(opts: PostingStateMachineOptions) {
     this.repo = opts.repo;
@@ -161,6 +235,7 @@ export class PostingStateMachine {
     this.ttlHours = opts.sessionTtlHours ?? DEFAULT_SESSION_TTL_HOURS;
     this.clock = opts.clock ?? (() => new Date());
     this.onQualityJudged = opts.onQualityJudged;
+    this.exemplarWriter = opts.exemplarWriter;
   }
 
   private nowIso(): string {
@@ -424,7 +499,8 @@ export class PostingStateMachine {
    *  - reject    : `awaiting_decision` → `failed_terminal`
    */
   async applyDecision(sessionId: string, decision: PostingDecision): Promise<PostingSession> {
-    return this.repo.withState(async (state) => {
+    let exemplarRecord: ExemplarRecord | undefined;
+    const result = await this.repo.withState(async (state) => {
       const session = readSession(state, sessionId);
       if (!session) throw new Error(`session not found: ${sessionId}`);
       if (session.state !== 'awaiting_decision') {
@@ -441,8 +517,30 @@ export class PostingStateMachine {
             ? moved.candidates.map((c, i) => (i === moved.currentCandidateIndex ? { ...c, status: 'accepted' as const } : c))
             : moved.candidates;
       const next: PostingSession = { ...moved, candidates };
+      exemplarRecord = decision === 'schedule' || decision === 'revise'
+        ? buildDecisionExemplarRecord(next, decision, this.nowIso())
+        : undefined;
+      const nextState = exemplarRecord ? appendStateExemplar(state, exemplarRecord) : state;
       this.logger?.info({ sessionId, decision, to: target }, 'posting decision applied');
-      return { state: upsertSession(state, next), result: next };
+      return { state: upsertSession(nextState, next), result: next };
+    });
+    if (exemplarRecord) this.persistExemplarAfterDecision(exemplarRecord);
+    return result;
+  }
+
+  private persistExemplarAfterDecision(record: ExemplarRecord): void {
+    if (!this.exemplarWriter) return;
+    void (async () => {
+      await this.exemplarWriter!.write(record);
+      if (this.repo.writeKnowledgeFiles) {
+        const account = await this.repo.loadAccount();
+        await this.repo.writeKnowledgeFiles(account);
+      }
+    })().catch((err: unknown) => {
+      this.logger?.warn(
+        { err: err instanceof Error ? err.message : String(err), exemplarId: record.id },
+        'posting_exemplar_persist_failed',
+      );
     });
   }
 

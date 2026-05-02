@@ -107,4 +107,35 @@ describe('buildKnowledgeFiles', () => {
     expect(rich['voice-guide.md']).toContain('1. (短文) まず小さく試します。');
     expect(rich['voice-guide.md']).toContain('2. (中文) 導入前に論点をそろえます。');
   });
+
+  it('adds exemplar links to AGENTS.md and CLAUDE.md when recent exemplars are supplied', () => {
+    const files = buildKnowledgeFiles(account({ account_id: 'zumi-x' }), {
+      recentExemplars: [
+        {
+          id: 'exm_02',
+          topic: '新しい修正',
+          createdAt: '2026-05-03T00:00:00.000Z',
+          relativePath: 'exemplars/2026-05-03-new.md',
+        },
+        {
+          id: 'exm_01',
+          topic: '古い修正',
+          createdAt: '2026-05-02T00:00:00.000Z',
+          relativePath: 'exemplars/2026-05-02-old.md',
+        },
+      ],
+    });
+
+    expect(files['AGENTS.md']).toContain('## 学習素材 (exemplars)');
+    expect(files['AGENTS.md']).toContain('- [新しい修正](./exemplars/2026-05-03-new.md) (2026-05-03T00:00:00.000Z)');
+    expect(files['AGENTS.md']).toContain('- [古い修正](./exemplars/2026-05-02-old.md) (2026-05-02T00:00:00.000Z)');
+    expect(files['CLAUDE.md']).toBe(files['AGENTS.md']);
+  });
+
+  it('omits exemplar section when recent exemplars are not supplied', () => {
+    const files = buildKnowledgeFiles(account({ account_id: 'zumi-x' }));
+
+    expect(files['AGENTS.md']).not.toContain('## 学習素材 (exemplars)');
+    expect(files['CLAUDE.md']).not.toContain('## 学習素材 (exemplars)');
+  });
 });

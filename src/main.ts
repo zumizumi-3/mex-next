@@ -32,6 +32,7 @@ import { SessionStore } from './conversation/session-store.js';
 import { IntentDrivenRunner } from './conversation/runner.js';
 import { AccountRepo } from './account-state/repo.js';
 import { GitSync } from './account-state/git-sync.js';
+import { ExemplarWriter } from './posting/exemplar-writer.js';
 import { escalateOperator } from './automation/operator-escalation.js';
 import {
   createBridge,
@@ -231,7 +232,11 @@ async function main(): Promise<void> {
       });
     },
   });
-  repo = new AccountRepo(config.accountRepo, { gitSync, logger: log });
+  const exemplarWriter = new ExemplarWriter({
+    accountRepoPath: config.accountRepo,
+    logger: log.child({ subsystem: 'exemplar-writer' }),
+  });
+  repo = new AccountRepo(config.accountRepo, { gitSync, exemplarWriter, logger: log });
   void gitSync
     .healthCheck()
     .then((result) =>
@@ -259,6 +264,7 @@ async function main(): Promise<void> {
     logger: log,
     operatorDiscordUserIds: config.operatorDiscordUserIds,
     judgmentEvents,
+    exemplarWriter,
     ...(xApi ? { xApi } : {}),
   };
 

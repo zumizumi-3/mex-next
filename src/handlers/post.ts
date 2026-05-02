@@ -37,6 +37,7 @@ export async function handlePostCreate(
     repo: asPostingMachineRepo(ctx.repo),
     bridge: adaptedBridge,
     logger: ctx.logger,
+    ...(ctx.exemplarWriter ? { exemplarWriter: ctx.exemplarWriter } : {}),
   });
 
   let session;
