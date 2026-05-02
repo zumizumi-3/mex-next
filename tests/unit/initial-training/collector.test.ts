@@ -94,6 +94,9 @@ function makeXApi(tweets: TweetEvent[]): XApiSurface {
     async deleteTweet() {
       return undefined;
     },
+    async likeTweet() {
+      return undefined;
+    },
   };
 }
 

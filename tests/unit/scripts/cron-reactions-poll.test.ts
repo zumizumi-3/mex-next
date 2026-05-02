@@ -66,6 +66,7 @@ function makeConfig(): AppConfig {
     pendingTurnStorePath: `${workDir}/pending.json`,
     sessionStorePath: `${workDir}/sessions.json`,
     approvalStorePath: `${workDir}/approvals.jsonl`,
+    judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: {},
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
@@ -145,6 +146,7 @@ function makeXApi(opts: XApiMockOpts = {}): XApiSurface {
       return { id, name: handle, handle };
     }),
     deleteTweet: vi.fn(async () => undefined),
+    likeTweet: vi.fn(async () => undefined),
   };
 }
 

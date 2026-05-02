@@ -125,6 +125,27 @@ async function main(): Promise<void> {
 
   log.info({ accountId: config.accountId }, 'mex-next booting');
 
+  /**
+   * Adapter: collectors / target-button handlers expect `LlmProviderLike`
+   * (`.request<T>()`), but the bridge exposes `.call()`. We wrap so they get
+   * a single contract while the bridge stays canonical.
+   */
+  const adaptBridgeForCollectors = (bridge: LlmProvider): LlmProviderLike => ({
+    async request<T>(input: { kind: string; input: Record<string, unknown>; timeoutMs?: number }): Promise<{ data: T; raw?: string }> {
+      const response = await bridge.call({
+        kind: input.kind as never,
+        userPrompt: JSON.stringify(input.input),
+      });
+      let data: T;
+      try {
+        data = JSON.parse(response.text) as T;
+      } catch {
+        data = {} as T;
+      }
+      return { data, raw: response.text };
+    },
+  });
+
   const repo = new AccountRepo(config.accountRepo);
   const client = createDiscordClient({ logger: log });
   const poster = new DiscordPosterImpl(client, {

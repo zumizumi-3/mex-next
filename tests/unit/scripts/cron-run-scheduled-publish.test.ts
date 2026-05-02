@@ -71,6 +71,7 @@ function makeConfig(): AppConfig {
     pendingTurnStorePath: `${workDir}/pending.json`,
     sessionStorePath: `${workDir}/sessions.json`,
     approvalStorePath: `${workDir}/approvals.jsonl`,
+    judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: { operator: 'ch-op' },
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,
@@ -105,6 +106,7 @@ function makeXApi(postFn?: (text: string) => Promise<PostResult>): XApiSurface {
     getUserTweets: vi.fn(async () => []),
     getUserByHandle: vi.fn(async () => ({ id: 'u', name: 'n', handle: 'h' })),
     deleteTweet: vi.fn(async () => undefined),
+    likeTweet: vi.fn(async () => undefined),
   };
 }
 
