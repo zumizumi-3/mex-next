@@ -102,8 +102,13 @@ export async function handleDiscordMessage(
     }
   }
 
-  const conversationKey = resolveConversationKey(message);
-  const replyChannelId = message.channel.id;
+  // Resolve the conversation: in thread → reuse thread; in main channel
+  // → spawn a new thread per user message so the channel stays clean.
+  // Falls back to inline reply if startThread is unavailable (e.g. DMs).
+  const conversation = await resolveConversation(message, log);
+  const conversationKey = conversation.key;
+  const replyChannelId = conversation.replyChannel.id;
+  const replyChannel = conversation.replyChannel;
 
   const lockState = getConversationLockState(conversationKey);
   if (lockState.running) {
@@ -115,7 +120,7 @@ export async function handleDiscordMessage(
     return;
   }
 
-  const channel = message.channel as TextBasedChannel & ProgressChannel;
+  const channel = replyChannel as TextBasedChannel & ProgressChannel;
   const progress = createProgressIndicator({
     channel: { send: (text: string) => channel.send(text) },
     logger: log,
@@ -216,11 +221,13 @@ export function shouldHandleMessage(
     return mentioned;
   }
 
+  // Inside an allowlisted channel: respond automatically — no @mention required.
+  // (wah-office-v2 pattern. Customers shouldn't have to remember the bot handle.)
   if (allowedChannels.has(message.channelId)) {
     return true;
   }
 
-  // Threads: if parent is allowlisted, the thread inherits.
+  // Threads spawned from an allowlisted channel inherit the allowance.
   if (channel.isThread() && channel.parentId && allowedChannels.has(channel.parentId)) {
     return true;
   }
@@ -265,13 +272,68 @@ function isBotMentioned(message: Message): boolean {
   return new RegExp(`<@!?${userId}>`).test(String(message.content ?? ''));
 }
 
-function resolveConversationKey(message: Message): string {
-  // For threads we keep the thread id as the key. For DMs and
-  // regular channels, the channel id is unique enough.
+/**
+ * Locate or spawn the channel where the bot should reply.
+ *
+ * - Already in a thread → reuse it (subsequent turns continue there).
+ * - DMs → keep using the DM channel.
+ * - Regular guild channel → spawn a thread from the user's message so
+ *   the main channel stays clean. Falls back to the channel itself if
+ *   the API rejects (missing permission, system message, etc.).
+ *
+ * Ported from wah-office-v2 `resolveConversation` / `ensureMessageThread`.
+ */
+async function resolveConversation(
+  message: Message,
+  log?: Logger,
+): Promise<{ key: string; replyChannel: TextBasedChannel | DMChannel }> {
   if (message.channel.isThread()) {
-    return message.channel.id;
+    return { key: message.channel.id, replyChannel: message.channel };
   }
-  return message.channelId;
+  if (message.channel.isDMBased()) {
+    return { key: message.channelId, replyChannel: message.channel as DMChannel };
+  }
+
+  // Try to spawn a thread from this message.
+  if (typeof (message as { startThread?: unknown }).startThread === 'function') {
+    try {
+      const name = buildThreadName(message);
+      const thread = await message.startThread({
+        name,
+        autoArchiveDuration: 1440,
+        reason: 'mex-next conversation thread',
+      });
+      log?.info(
+        { threadId: thread.id, parentId: thread.parentId ?? null },
+        'thread_started',
+      );
+      return { key: thread.id, replyChannel: thread as unknown as TextBasedChannel };
+    } catch (error) {
+      log?.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'thread_start_failed_falling_back_to_channel',
+      );
+    }
+  }
+
+  return { key: message.channelId, replyChannel: message.channel as TextBasedChannel };
+}
+
+function buildThreadName(message: Message): string {
+  const raw = String(message.content ?? '').replace(/\s+/g, ' ').trim();
+  const stripped = raw
+    .replace(/<@!?\d+>/g, '')
+    .replace(/<#\d+>/g, '')
+    .trim();
+  const head = (stripped || 'メッセージ').slice(0, 40);
+  // Append author short id for uniqueness.
+  const tag = message.author?.username
+    ? `@${message.author.username}`
+    : message.author?.id
+      ? `@${message.author.id.slice(-4)}`
+      : '';
+  const candidate = tag ? `${head} (${tag})` : head;
+  return candidate.length > 95 ? candidate.slice(0, 95) + '…' : candidate;
 }
 
 function collectAttachments(message: Message): unknown[] {

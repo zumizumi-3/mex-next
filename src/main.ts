@@ -185,6 +185,13 @@ async function main(): Promise<void> {
 
   const runner = new IntentDrivenRunner({ bridge, handlers, handlerContext });
 
+  // Auto-derive allowed channels from the role mapping. Customers should
+  // never have to @mention the bot in their own designated channel — if
+  // the operator wired a channel into the role mapping, the bot listens.
+  const autoAllowedChannelIds = Array.from(
+    new Set(Object.values(config.discordChannelMap).filter(Boolean)),
+  );
+
   client.on('messageCreate', async (message) => {
     try {
       await handleDiscordMessage(message, {
@@ -192,6 +199,7 @@ async function main(): Promise<void> {
         config: {
           accountId: config.accountId,
           operatorDiscordUserIds: config.operatorDiscordUserIds,
+          allowedChannelIds: autoAllowedChannelIds,
         },
         sessionStore,
         pendingTurnStore,
