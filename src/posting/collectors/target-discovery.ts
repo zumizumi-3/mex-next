@@ -274,14 +274,47 @@ function isAction(value: unknown): value is TargetActionSuggestion['action'] {
   return value === 'like' || value === 'quote' || value === 'reply' || value === 'skip';
 }
 
-function targetButtons(eventId: string): unknown[] {
+/**
+ * Phase-1 button row.
+ *
+ * custom_id pattern matches `src/discord/interactions.ts` dispatch:
+ *   target:like:{sessionId}
+ *   target:quote-suggest:{sessionId}
+ *   target:reply-suggest:{sessionId}
+ *   target:skip:{sessionId}
+ */
+export function targetButtons(eventId: string): unknown[] {
   return [
     {
       type: 1,
       components: [
-        { type: 2, style: 3, label: 'いいね', custom_id: `target:${eventId}:like` },
-        { type: 2, style: 1, label: '引用', custom_id: `target:${eventId}:quote` },
-        { type: 2, style: 4, label: '見送り', custom_id: `target:${eventId}:skip` },
+        { type: 2, style: 3, label: '👍 いいね', custom_id: `target:like:${eventId}` },
+        { type: 2, style: 1, label: '🔁 引用', custom_id: `target:quote-suggest:${eventId}` },
+        { type: 2, style: 1, label: '💬 リプ', custom_id: `target:reply-suggest:${eventId}` },
+        { type: 2, style: 4, label: '⏭ スキップ', custom_id: `target:skip:${eventId}` },
+      ],
+    },
+  ];
+}
+
+/**
+ * Phase-2 button row used after quote / reply text was suggested.
+ * Operator either schedules, edits via modal, or cancels.
+ */
+export function targetPhase2Buttons(
+  mode: 'quote' | 'reply',
+  eventId: string,
+): unknown[] {
+  const scheduleId = `target:${mode}-schedule:${eventId}`;
+  const editId = `target:${mode}-edit:${eventId}`;
+  const cancelId = `target:skip:${eventId}`;
+  return [
+    {
+      type: 1,
+      components: [
+        { type: 2, style: 3, label: '✅ この内容で予約', custom_id: scheduleId },
+        { type: 2, style: 2, label: '✏️ 修正', custom_id: editId },
+        { type: 2, style: 4, label: '❌ 取消', custom_id: cancelId },
       ],
     },
   ];

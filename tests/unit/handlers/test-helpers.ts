@@ -83,6 +83,9 @@ export async function setupHandlerTest(opts?: {
     async deleteTweet() {
       return undefined;
     },
+    async likeTweet() {
+      return undefined;
+    },
   };
 
   const discordPoster: DiscordPoster = {
