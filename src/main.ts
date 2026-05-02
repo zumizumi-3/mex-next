@@ -27,6 +27,7 @@ import { ApprovalStore } from './discord/approval.js';
 import { DiscordPosterImpl } from './discord/poster.js';
 import { registerSlashCommands } from './discord/slash-registrar.js';
 import { dispatchSlashCommand } from './discord/slash-dispatch.js';
+import { CronWebhookServer } from './discord/cron-webhook.js';
 import { PendingTurnStore } from './conversation/pending-turn-store.js';
 import { SessionStore } from './conversation/session-store.js';
 import { IntentDrivenRunner } from './conversation/runner.js';
@@ -47,6 +48,8 @@ import { buildHandlers, type HandlerContext } from './handlers/index.js';
 import { asPostingRepo } from './handlers/repo-adapter.js';
 import type { LlmProviderLike } from './posting/collectors/types.js';
 import { GracefulShutdown, bindShutdownSignals } from './lifecycle/graceful-shutdown.js';
+import { runPeriodicRetro } from './scripts/cron-periodic-retro.js';
+import { startPhaseQuestionnaire } from './phase-questionnaire/runner.js';
 
 async function buildLlmBridge(
   config: AppConfig,
@@ -57,8 +60,7 @@ async function buildLlmBridge(
   // Anthropic SDK is opt-in: when ANTHROPIC_API_KEY is missing, every kind
   // falls back to claude_code (slightly slower but no separate billing).
   let anthropic: LlmProvider | undefined;
-  const shouldBuildAnthropic =
-    config.llmBackend === 'auto' || config.llmBackend === 'anthropic';
+  const shouldBuildAnthropic = config.llmBackend === 'auto' || config.llmBackend === 'anthropic';
   if (shouldBuildAnthropic && config.anthropicApiKey && config.anthropicApiKey.length > 0) {
     const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
     anthropic = createAnthropicSdkProvider({
@@ -138,6 +140,13 @@ function overrideAllKinds(provider: LlmProviderName): Partial<Record<LlmKind, Ll
   return Object.fromEntries(ALL_LLM_KINDS.map((kind) => [kind, provider])) as Partial<
     Record<LlmKind, LlmProviderName>
   >;
+}
+
+function parseCronWebhookPort(value: string | undefined): number {
+  if (!value) return 8787;
+  const port = Number.parseInt(value, 10);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) return 8787;
+  return port;
 }
 
 function buildXApiClient(
@@ -343,6 +352,39 @@ async function main(): Promise<void> {
 
   await client.login(config.discordBotToken);
 
+  let cronWebhook: CronWebhookServer | undefined;
+  const cronWebhookSecret = process.env.CRON_WEBHOOK_SECRET;
+  if (cronWebhookSecret && cronWebhookSecret.length > 0) {
+    const runRetro = async (horizon: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'half') => {
+      await runPeriodicRetro({ config, repo, bridge, poster, logger: log, horizon });
+    };
+    cronWebhook = new CronWebhookServer({
+      port: parseCronWebhookPort(process.env.CRON_WEBHOOK_PORT),
+      secret: cronWebhookSecret,
+      accountId: config.accountId,
+      logger: log.child({ subsystem: 'cron-webhook' }),
+      handlers: {
+        daily_retro: () => runRetro('daily'),
+        weekly_retro: () => runRetro('weekly'),
+        monthly_retro: () => runRetro('monthly'),
+        quarterly_retro: () => runRetro('quarterly'),
+        half_retro: () => runRetro('half'),
+        phase_questionnaire: async (cadence) => {
+          await startPhaseQuestionnaire({
+            repo,
+            bridge,
+            poster,
+            cadence,
+            logger: log,
+          });
+        },
+      },
+    });
+    await cronWebhook.start();
+  } else {
+    log.warn('cron_webhook_disabled_missing_secret');
+  }
+
   const shutdown = new GracefulShutdown({ logger: log, defaultTimeoutMs: 5_000 });
 
   // Discord client teardown (registered first so it tears down LAST).
@@ -351,6 +393,14 @@ async function main(): Promise<void> {
     timeoutMs: 5_000,
     run: async () => {
       await client.destroy();
+    },
+  });
+
+  shutdown.register({
+    name: 'cron_webhook_server',
+    timeoutMs: 2_000,
+    run: async () => {
+      await cronWebhook?.stop();
     },
   });
 

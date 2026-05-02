@@ -1,0 +1,63 @@
+name: monthly-retro
+
+on:
+  schedule:
+    - cron: '0 22 28-31 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger bot monthly retro
+        env:
+          BOT_URL: ${{ secrets.MEX_BOT_URL }}
+          BOT_TOKEN: ${{ secrets.MEX_BOT_WEBHOOK_TOKEN }}
+          ACCOUNT_ID: ${{ vars.MEX_ACCOUNT_ID }}
+        run: |
+          set -u
+          if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ] && [ "$(TZ=Asia/Tokyo date +'%d')" != "01" ]; then
+            echo "::notice::Not month start in JST; skipping."
+            exit 0
+          fi
+
+          if [ -z "${BOT_URL:-}" ] || [ -z "${BOT_TOKEN:-}" ] || [ -z "${ACCOUNT_ID:-}" ]; then
+            echo "::warning::MEX_BOT_URL / MEX_BOT_WEBHOOK_TOKEN / MEX_ACCOUNT_ID not set; skipping."
+            exit 0
+          fi
+
+          if curl -fsS -X POST "${BOT_URL}/v1/cron-trigger" \
+            -H "Authorization: Bearer ${BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"kind\":\"monthly_retro\",\"account_id\":\"${ACCOUNT_ID}\"}" \
+            | tee /tmp/resp.json; then
+            echo "::notice::monthly_retro triggered"
+            exit 0
+          fi
+
+          echo "::warning::monthly_retro webhook failed; writing placeholder."
+          mkdir -p retros
+          ts="$(TZ=Asia/Tokyo date +'%Y-%m-%dT%H-%M-%S%z')"
+          file="retros/${ts}-monthly-retro-webhook-failed.md"
+          {
+            echo "# monthly retro webhook failed"
+            echo
+            echo "- kind: monthly_retro"
+            echo "- account_id: ${ACCOUNT_ID}"
+            echo "- detected_at_jst: ${ts}"
+            echo "- bot_url: ${BOT_URL}"
+            echo
+            echo "GitHub Actions could not reach the MeX bot webhook. Check the bot host, CRON_WEBHOOK_SECRET, and mex-bot.service."
+          } > "${file}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${file}"
+          git commit -m "ops(retro): record monthly-retro webhook failure ${ts}" || true
+          git push || echo "::warning::failed to push webhook failure placeholder"
+          exit 0

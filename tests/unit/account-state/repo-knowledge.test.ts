@@ -15,7 +15,11 @@ afterEach(async () => {
 describe('AccountRepo.writeKnowledgeFiles', () => {
   it('writes all knowledge markdown files and triggers git sync', async () => {
     workDir = await mkdtemp(join(tmpdir(), 'mex-repo-knowledge-'));
-    await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+    await writeFile(
+      join(workDir, 'account.json'),
+      JSON.stringify({ account_id: 'zumi-x' }),
+      'utf-8',
+    );
     await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
     const syncMutation = vi.fn(async () => ({
       committed: true,
@@ -26,11 +30,13 @@ describe('AccountRepo.writeKnowledgeFiles', () => {
       gitSync: { syncMutation } as unknown as GitSync,
     });
 
-    await repo.writeKnowledgeFiles(AccountJsonSchema.parse({
-      account_id: 'zumi-x',
-      display_name: 'ずみ',
-      x_handle: 'zumi_ops',
-    }));
+    await repo.writeKnowledgeFiles(
+      AccountJsonSchema.parse({
+        account_id: 'zumi-x',
+        display_name: 'ずみ',
+        x_handle: 'zumi_ops',
+      }),
+    );
 
     for (const name of [
       'AGENTS.md',
@@ -40,6 +46,9 @@ describe('AccountRepo.writeKnowledgeFiles', () => {
       'voice-guide.md',
       'targets.md',
       'README.md',
+      '.github/workflows/weekly-retro.yml',
+      '.github/workflows/monthly-retro.yml',
+      '.github/workflows/phase-questionnaire.yml',
     ]) {
       const body = await readFile(join(workDir, name), 'utf-8');
       expect(body.length).toBeGreaterThan(0);
@@ -48,13 +57,17 @@ describe('AccountRepo.writeKnowledgeFiles', () => {
     expect(await readFile(join(workDir, 'AGENTS.md'), 'utf-8')).toContain('@zumi_ops');
     expect(syncMutation).toHaveBeenCalledTimes(1);
     expect(syncMutation).toHaveBeenCalledWith(
-      'chore(knowledge): regenerate AGENTS / CLAUDE / persona / brand / targets',
+      'chore(knowledge): regenerate knowledge files and workflows',
     );
   });
 
   it('passes recent exemplars into generated AGENTS.md', async () => {
     workDir = await mkdtemp(join(tmpdir(), 'mex-repo-knowledge-'));
-    await writeFile(join(workDir, 'account.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
+    await writeFile(
+      join(workDir, 'account.json'),
+      JSON.stringify({ account_id: 'zumi-x' }),
+      'utf-8',
+    );
     await writeFile(join(workDir, 'state.json'), JSON.stringify({ account_id: 'zumi-x' }), 'utf-8');
     const repo = new AccountRepo(workDir, {
       exemplarWriter: {

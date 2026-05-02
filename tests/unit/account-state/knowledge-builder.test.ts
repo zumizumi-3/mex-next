@@ -14,15 +14,20 @@ describe('buildKnowledgeFiles', () => {
   it('minimum account generates all files with fallbacks', () => {
     const files = buildKnowledgeFiles(account({ account_id: 'zumi-x' }));
 
-    expect(Object.keys(files).sort()).toEqual([
-      'AGENTS.md',
-      'CLAUDE.md',
-      'README.md',
-      'brand.md',
-      'persona.md',
-      'targets.md',
-      'voice-guide.md',
-    ].sort());
+    expect(Object.keys(files).sort()).toEqual(
+      [
+        '.github/workflows/monthly-retro.yml',
+        '.github/workflows/phase-questionnaire.yml',
+        '.github/workflows/weekly-retro.yml',
+        'AGENTS.md',
+        'CLAUDE.md',
+        'README.md',
+        'brand.md',
+        'persona.md',
+        'targets.md',
+        'voice-guide.md',
+      ].sort(),
+    );
     expect(files['AGENTS.md']).toContain('# AGENTS.md — zumi-x');
     expect(files['AGENTS.md']).toContain('- ユーザー名: @—');
     expect(files['persona.md']).toContain('| 役割 | — |');
@@ -32,36 +37,62 @@ describe('buildKnowledgeFiles', () => {
     expect(files['CLAUDE.md']).toBe(files['AGENTS.md']);
   });
 
+  it('includes GitHub Actions workflow files for webhook cron triggers', () => {
+    const files = buildKnowledgeFiles(account({ account_id: 'zumi-x' }));
+
+    const weekly = files['.github/workflows/weekly-retro.yml'];
+    expect(weekly).toContain('name: weekly-retro');
+    expect(weekly).toContain("cron: '0 22 * * 0'");
+    expect(weekly).toContain('actions/checkout@v4');
+    expect(weekly).toContain('\\"kind\\":\\"weekly_retro\\"');
+    expect(weekly).toContain('MEX_BOT_WEBHOOK_TOKEN');
+    expect(weekly).toContain('webhook failed; writing placeholder');
+
+    const monthly = files['.github/workflows/monthly-retro.yml'];
+    expect(monthly).toContain('name: monthly-retro');
+    expect(monthly).toContain("cron: '0 22 28-31 * *'");
+    expect(monthly).toContain('Not month start in JST; skipping.');
+    expect(monthly).toContain('\\"kind\\":\\"monthly_retro\\"');
+
+    const phase = files['.github/workflows/phase-questionnaire.yml'];
+    expect(phase).toContain('name: phase-questionnaire');
+    expect(phase).toContain("cron: '0 0 1 * *'");
+    expect(phase).toContain('\\"kind\\":\\"phase_questionnaire\\"');
+    expect(phase).toContain('\\"cadence\\":\\"monthly\\"');
+  });
+
   it('rich account reflects persona, brand, cadence and goal values', () => {
-    const files = buildKnowledgeFiles(uncheckedAccount({
-      account_id: 'acme-x',
-      display_name: 'Acme運用',
-      x_handle: 'acme_ops',
-      persona: {
-        role: 'SaaS創業者',
-        archetype_label: '専門家',
-        archetype_key: 'industry_expert',
-        archetype_tagline: '論点を外さず判断する。',
-        background: 'B2B SaaS を運営。',
-        empathy: '現場の迷いに寄り添う。',
-        avoid: '上から目線。',
-      },
-      brand: {
-        primary_themes: ['SaaS営業', '導入設計'],
-        voice_tone: '静かで実務的',
-        forbidden: ['煽り', '断言しすぎ'],
-        hashtag_policy: '原則使わない',
-      },
-      half_focus: '商談化率の改善',
-      goal_stack: {
-        objective: '月10件の相談獲得',
-        recognition: '導入設計の人',
-      },
-      operating_cadence: {
-        profile: 'standard',
-        hot_zones: [{ label: '朝', start: '06:00', end: '09:00' }],
-      },
-    }));
+    const files = buildKnowledgeFiles(
+      uncheckedAccount({
+        account_id: 'acme-x',
+        display_name: 'Acme運用',
+        x_handle: 'acme_ops',
+        persona: {
+          role: 'SaaS創業者',
+          archetype_label: '専門家',
+          archetype_key: 'industry_expert',
+          archetype_tagline: '論点を外さず判断する。',
+          background: 'B2B SaaS を運営。',
+          empathy: '現場の迷いに寄り添う。',
+          avoid: '上から目線。',
+        },
+        brand: {
+          primary_themes: ['SaaS営業', '導入設計'],
+          voice_tone: '静かで実務的',
+          forbidden: ['煽り', '断言しすぎ'],
+          hashtag_policy: '原則使わない',
+        },
+        half_focus: '商談化率の改善',
+        goal_stack: {
+          objective: '月10件の相談獲得',
+          recognition: '導入設計の人',
+        },
+        operating_cadence: {
+          profile: 'standard',
+          hot_zones: [{ label: '朝', start: '06:00', end: '09:00' }],
+        },
+      }),
+    );
 
     expect(files['AGENTS.md']).toContain('- 表示名: Acme運用');
     expect(files['AGENTS.md']).toContain('- ユーザー名: @acme_ops');
@@ -77,19 +108,23 @@ describe('buildKnowledgeFiles', () => {
     const empty = buildKnowledgeFiles(account({ account_id: 'zumi-x' }));
     expect(empty['targets.md']).toContain('現在追跡対象はありません');
 
-    const one = buildKnowledgeFiles(account({
-      account_id: 'zumi-x',
-      x_action_system: { tracked_targets: { usernames: ['alice'] } },
-    }));
+    const one = buildKnowledgeFiles(
+      account({
+        account_id: 'zumi-x',
+        x_action_system: { tracked_targets: { usernames: ['alice'] } },
+      }),
+    );
     expect(one['targets.md']).toContain('| @alice | 追跡対象 | — |');
 
-    const many = buildKnowledgeFiles(account({
-      account_id: 'zumi-x',
-      tracked_targets: [
-        { handle: '@alice', relationship: '競合', notes: '投稿型を見る' },
-        { username: 'bob', relationship: '顧客候補', memo: 'リプ候補' },
-      ],
-    }));
+    const many = buildKnowledgeFiles(
+      account({
+        account_id: 'zumi-x',
+        tracked_targets: [
+          { handle: '@alice', relationship: '競合', notes: '投稿型を見る' },
+          { username: 'bob', relationship: '顧客候補', memo: 'リプ候補' },
+        ],
+      }),
+    );
     expect(many['targets.md']).toContain('| @alice | 競合 | 投稿型を見る |');
     expect(many['targets.md']).toContain('| @bob | 顧客候補 | リプ候補 |');
   });
@@ -98,12 +133,14 @@ describe('buildKnowledgeFiles', () => {
     const empty = buildKnowledgeFiles(account({ account_id: 'zumi-x' }));
     expect(empty['voice-guide.md']).toContain('今後 exemplars/ から学習します。');
 
-    const rich = buildKnowledgeFiles(account({
-      account_id: 'zumi-x',
-      voice_profile: {
-        examples: ['まず小さく試します。', '導入前に論点をそろえます。'],
-      },
-    }));
+    const rich = buildKnowledgeFiles(
+      account({
+        account_id: 'zumi-x',
+        voice_profile: {
+          examples: ['まず小さく試します。', '導入前に論点をそろえます。'],
+        },
+      }),
+    );
     expect(rich['voice-guide.md']).toContain('1. (短文) まず小さく試します。');
     expect(rich['voice-guide.md']).toContain('2. (中文) 導入前に論点をそろえます。');
   });
@@ -127,8 +164,12 @@ describe('buildKnowledgeFiles', () => {
     });
 
     expect(files['AGENTS.md']).toContain('## 学習素材 (exemplars)');
-    expect(files['AGENTS.md']).toContain('- [新しい修正](./exemplars/2026-05-03-new.md) (2026-05-03T00:00:00.000Z)');
-    expect(files['AGENTS.md']).toContain('- [古い修正](./exemplars/2026-05-02-old.md) (2026-05-02T00:00:00.000Z)');
+    expect(files['AGENTS.md']).toContain(
+      '- [新しい修正](./exemplars/2026-05-03-new.md) (2026-05-03T00:00:00.000Z)',
+    );
+    expect(files['AGENTS.md']).toContain(
+      '- [古い修正](./exemplars/2026-05-02-old.md) (2026-05-02T00:00:00.000Z)',
+    );
     expect(files['CLAUDE.md']).toBe(files['AGENTS.md']);
   });
 

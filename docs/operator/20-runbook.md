@@ -227,7 +227,32 @@ bash /opt/mex-next/scripts/recover.sh <account-id> <github-owner>/<repo-name>
 
 GitHub 上の account_repo に auto push された `state.json` / `account.json` から復旧します。
 
-## 12. 関連 docs
+## 12. GitHub Actions cron (B2)
+
+retro / アンケート系は VPS の systemd timer **と並列で** GitHub Actions からも trigger されます。VPS 側 timer が落ちても、account repo 側の Actions から bot webhook を叩きます。
+
+設定 (一度だけ):
+
+1. account_repo の Settings > Secrets and variables > Actions
+2. Secrets:
+   - `MEX_BOT_URL`: `https://your-bot.example.com` (or `http://<vps_ip>:8787`)
+   - `MEX_BOT_WEBHOOK_TOKEN`: 32 文字以上のランダム秘密 (operator が決める)
+3. Variables:
+   - `MEX_ACCOUNT_ID`: account-id (例: `zumi-x`)
+4. `/etc/mex/<account>.env` にも `CRON_WEBHOOK_SECRET=<同じ token>` を追記
+5. `mex-bot.service` を restart して webhook server を起動
+
+確認:
+
+```bash
+curl http://<vps>:8787/health
+```
+
+`200 OK` が返れば server は起動済みです。Actions タブから `weekly-retro` / `monthly-retro` / `phase-questionnaire` を手動 dispatch して動作確認します。
+
+webhook に失敗した場合、Actions は warning を出し、`retros/` に `*-webhook-failed.md` を commit します。bot 側の `CRON_WEBHOOK_SECRET` と GitHub 側 `MEX_BOT_WEBHOOK_TOKEN` が一致しているか、`MEX_BOT_URL` が runner から到達可能かを確認してください。
+
+## 13. 関連 docs
 
 - [21-monitoring.md](./21-monitoring.md)
 - [50-troubleshooting.md](./50-troubleshooting.md)

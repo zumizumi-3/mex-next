@@ -15,7 +15,7 @@
  * 含むものは `InvalidContentIdError` で reject される。
  */
 
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { readJson, readJsonRaw, writeJsonAtomic, withStateLock } from './io.js';
 import { AccountJsonSchema, type AccountJson } from './account-schema.js';
@@ -255,11 +255,13 @@ export class AccountRepo {
     const recentExemplars = await this.listRecentExemplarsForKnowledge();
     const files = buildKnowledgeFiles(account, { recentExemplars });
     await Promise.all(
-      Object.entries(files).map(([name, content]) =>
-        fs.writeFile(join(this.path, name), content, 'utf-8'),
-      ),
+      Object.entries(files).map(async ([name, content]) => {
+        const filePath = join(this.path, name);
+        await fs.mkdir(dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, content, 'utf-8');
+      }),
     );
-    this.syncMutation('chore(knowledge): regenerate AGENTS / CLAUDE / persona / brand / targets');
+    this.syncMutation('chore(knowledge): regenerate knowledge files and workflows');
   }
 
   private async listRecentExemplarsForKnowledge(): Promise<ReadonlyArray<RecentExemplar>> {

@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 describe('regenerate-knowledge', () => {
-  it('writes the 7 knowledge markdown files from account.json', async () => {
+  it('writes the knowledge markdown and workflow files from account.json', async () => {
     workDir = await mkdtemp(join(tmpdir(), 'mex-knowledge-'));
     await writeFile(
       join(workDir, 'account.json'),
@@ -30,7 +30,7 @@ describe('regenerate-knowledge', () => {
 
     const report = await runRegenerateKnowledge({ accountRepo: workDir });
 
-    expect(report.written).toHaveLength(7);
+    expect(report.written).toHaveLength(10);
     const agents = await readFile(join(workDir, 'AGENTS.md'), 'utf-8');
     expect(agents).toContain('# AGENTS.md — zumi-x');
     expect(agents).toContain('- 表示名: Zumi X');
@@ -41,15 +41,24 @@ describe('regenerate-knowledge', () => {
     await expect(readFile(join(workDir, 'brand.md'), 'utf-8')).resolves.toContain(
       '# Brand — Zumi X',
     );
-    await expect(
-      readFile(join(workDir, 'voice-guide.md'), 'utf-8'),
-    ).resolves.toContain('# Voice Guide — Zumi X');
+    await expect(readFile(join(workDir, 'voice-guide.md'), 'utf-8')).resolves.toContain(
+      '# Voice Guide — Zumi X',
+    );
     await expect(readFile(join(workDir, 'targets.md'), 'utf-8')).resolves.toContain(
       '# Tracked Targets — Zumi X',
     );
     await expect(readFile(join(workDir, 'README.md'), 'utf-8')).resolves.toContain(
       '# zumi-x — MeX 運用データ',
     );
+    await expect(
+      readFile(join(workDir, '.github/workflows/weekly-retro.yml'), 'utf-8'),
+    ).resolves.toContain('weekly_retro');
+    await expect(
+      readFile(join(workDir, '.github/workflows/monthly-retro.yml'), 'utf-8'),
+    ).resolves.toContain('monthly_retro');
+    await expect(
+      readFile(join(workDir, '.github/workflows/phase-questionnaire.yml'), 'utf-8'),
+    ).resolves.toContain('phase_questionnaire');
   });
 
   it('returns exit code 1 with an explanatory message when account.json is missing', async () => {

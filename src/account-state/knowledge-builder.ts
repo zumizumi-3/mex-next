@@ -17,6 +17,9 @@ export interface KnowledgeFiles {
   readonly 'voice-guide.md': string;
   readonly 'targets.md': string;
   readonly 'README.md': string;
+  readonly '.github/workflows/weekly-retro.yml': string;
+  readonly '.github/workflows/monthly-retro.yml': string;
+  readonly '.github/workflows/phase-questionnaire.yml': string;
 }
 
 interface PersonaKnowledge {
@@ -64,7 +67,10 @@ const PERSONA_ARCHETYPES: Record<string, { label: string; tagline: string }> = {
   },
 };
 
-export function buildKnowledgeFiles(account: AccountJson, opts: KnowledgeBuildOptions = {}): KnowledgeFiles {
+export function buildKnowledgeFiles(
+  account: AccountJson,
+  opts: KnowledgeBuildOptions = {},
+): KnowledgeFiles {
   const accountId = text(account.account_id);
   const displayName = text(account.display_name) || accountId || DASH;
   const xHandle = normalizeHandle(valueAt(account, 'x_handle') ?? valueAt(account, 'x_username'));
@@ -126,6 +132,9 @@ export function buildKnowledgeFiles(account: AccountJson, opts: KnowledgeBuildOp
     'voice-guide.md': buildVoiceGuideMarkdown(displayName, account),
     'targets.md': buildTargetsMarkdown(displayName, targets),
     'README.md': buildReadmeMarkdown(accountId || DASH),
+    '.github/workflows/weekly-retro.yml': buildWeeklyRetroWorkflow(),
+    '.github/workflows/monthly-retro.yml': buildMonthlyRetroWorkflow(),
+    '.github/workflows/phase-questionnaire.yml': buildPhaseQuestionnaireWorkflow(),
   };
 }
 
@@ -193,9 +202,14 @@ function buildBrandMarkdown(
     valueAt(account.brand, 'hashtag_policy') ?? valueAt(account.brand, 'hashtags'),
   );
   const hotZones = account.operating_cadence?.hot_zones ?? [];
-  const hotZoneLines = hotZones.length > 0
-    ? hotZones.map((z) => `  - ${text(z.label) || DASH}: ${text(z.start) || DASH}-${text(z.end) || DASH}`).join('\n')
-    : `  - ${DASH}`;
+  const hotZoneLines =
+    hotZones.length > 0
+      ? hotZones
+          .map(
+            (z) => `  - ${text(z.label) || DASH}: ${text(z.start) || DASH}-${text(z.end) || DASH}`,
+          )
+          .join('\n')
+      : `  - ${DASH}`;
 
   return withFinalNewline(`# Brand — ${displayName}
 
@@ -219,9 +233,12 @@ ${hotZoneLines}`);
 
 function buildVoiceGuideMarkdown(displayName: string, account: AccountJson): string {
   const examples = voiceExamples(account);
-  const body = examples.length > 0
-    ? examples.map((example, index) => `${index + 1}. (${example.label}) ${example.text}`).join('\n')
-    : '今後 exemplars/ から学習します。';
+  const body =
+    examples.length > 0
+      ? examples
+          .map((example, index) => `${index + 1}. (${example.label}) ${example.text}`)
+          .join('\n')
+      : '今後 exemplars/ から学習します。';
 
   return withFinalNewline(`# Voice Guide — ${displayName}
 
@@ -271,6 +288,117 @@ function buildReadmeMarkdown(accountId: string): string {
 - 何かを変えたい時は markdown を直接編集するのではなく、bot に話しかけて反映を依頼してください。`);
 }
 
+function buildWeeklyRetroWorkflow(): string {
+  return buildCronTriggerWorkflow({
+    name: 'weekly-retro',
+    cron: '0 22 * * 0',
+    kind: 'weekly_retro',
+    placeholderLabel: 'weekly retro',
+    placeholderSlug: 'weekly-retro',
+  });
+}
+
+function buildMonthlyRetroWorkflow(): string {
+  return buildCronTriggerWorkflow({
+    name: 'monthly-retro',
+    cron: '0 22 28-31 * *',
+    kind: 'monthly_retro',
+    placeholderLabel: 'monthly retro',
+    placeholderSlug: 'monthly-retro',
+    monthBoundaryGuard: true,
+  });
+}
+
+function buildPhaseQuestionnaireWorkflow(): string {
+  return buildCronTriggerWorkflow({
+    name: 'phase-questionnaire',
+    cron: '0 0 1 * *',
+    kind: 'phase_questionnaire',
+    cadence: 'monthly',
+    placeholderLabel: 'phase questionnaire',
+    placeholderSlug: 'phase-questionnaire',
+  });
+}
+
+function buildCronTriggerWorkflow(opts: {
+  readonly name: string;
+  readonly cron: string;
+  readonly kind: string;
+  readonly cadence?: 'monthly';
+  readonly placeholderLabel: string;
+  readonly placeholderSlug: string;
+  readonly monthBoundaryGuard?: boolean;
+}): string {
+  const cadenceJson = opts.cadence ? `,\\"cadence\\":\\"${opts.cadence}\\"` : '';
+  const monthBoundaryGuard = opts.monthBoundaryGuard
+    ? `
+          if [ "\${GITHUB_EVENT_NAME:-}" = "schedule" ] && [ "$(TZ=Asia/Tokyo date +'%d')" != "01" ]; then
+            echo "::notice::Not month start in JST; skipping."
+            exit 0
+          fi
+`
+    : '';
+
+  return withFinalNewline(`name: ${opts.name}
+
+on:
+  schedule:
+    - cron: '${opts.cron}'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger bot ${opts.placeholderLabel}
+        env:
+          BOT_URL: \${{ secrets.MEX_BOT_URL }}
+          BOT_TOKEN: \${{ secrets.MEX_BOT_WEBHOOK_TOKEN }}
+          ACCOUNT_ID: \${{ vars.MEX_ACCOUNT_ID }}
+        run: |
+          set -u${monthBoundaryGuard}
+          if [ -z "\${BOT_URL:-}" ] || [ -z "\${BOT_TOKEN:-}" ] || [ -z "\${ACCOUNT_ID:-}" ]; then
+            echo "::warning::MEX_BOT_URL / MEX_BOT_WEBHOOK_TOKEN / MEX_ACCOUNT_ID not set; skipping."
+            exit 0
+          fi
+
+          if curl -fsS -X POST "\${BOT_URL}/v1/cron-trigger" \\
+            -H "Authorization: Bearer \${BOT_TOKEN}" \\
+            -H "Content-Type: application/json" \\
+            -d "{\\"kind\\":\\"${opts.kind}\\",\\"account_id\\":\\"\${ACCOUNT_ID}\\"${cadenceJson}}" \\
+            | tee /tmp/resp.json; then
+            echo "::notice::${opts.kind} triggered"
+            exit 0
+          fi
+
+          echo "::warning::${opts.kind} webhook failed; writing placeholder."
+          mkdir -p retros
+          ts="$(TZ=Asia/Tokyo date +'%Y-%m-%dT%H-%M-%S%z')"
+          file="retros/\${ts}-${opts.placeholderSlug}-webhook-failed.md"
+          {
+            echo "# ${opts.placeholderLabel} webhook failed"
+            echo
+            echo "- kind: ${opts.kind}"
+            echo "- account_id: \${ACCOUNT_ID}"
+            echo "- detected_at_jst: \${ts}"
+            echo "- bot_url: \${BOT_URL}"
+            echo
+            echo "GitHub Actions could not reach the MeX bot webhook. Check the bot host, CRON_WEBHOOK_SECRET, and mex-bot.service."
+          } > "\${file}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "\${file}"
+          git commit -m "ops(retro): record ${opts.placeholderSlug} webhook failure \${ts}" || true
+          git push || echo "::warning::failed to push webhook failure placeholder"
+          exit 0`);
+}
+
 function basenameWithoutExt(path: string): string {
   const last = path.split('/').pop() ?? '';
   return last.replace(/\.md$/i, '');
@@ -317,7 +445,9 @@ function brandVoiceTone(account: AccountJson): string {
   const direct = text(valueAt(brand, 'voice_tone') ?? valueAt(brand, 'tone'));
   if (direct) return direct;
   const parts = [
-    text(valueAt(voice, 'distance_to_reader')) ? `距離感: ${text(valueAt(voice, 'distance_to_reader'))}` : '',
+    text(valueAt(voice, 'distance_to_reader'))
+      ? `距離感: ${text(valueAt(voice, 'distance_to_reader'))}`
+      : '',
     text(valueAt(voice, 'assertiveness')) ? `主張: ${text(valueAt(voice, 'assertiveness'))}` : '',
     text(valueAt(voice, 'warmth')) ? `温度感: ${text(valueAt(voice, 'warmth'))}` : '',
     text(valueAt(voice, 'humor')) ? `ユーモア: ${text(valueAt(voice, 'humor'))}` : '',
@@ -342,15 +472,17 @@ function goalItems(account: AccountJson): string[] {
   const direct = listOf(goalStack);
   if (direct.length > 0) return direct;
 
-  return unique([
-    text(valueAt(goalStack, 'objective')),
-    text(valueAt(goalStack, 'recognition')),
-    text(valueAt(goalStack, 'trust')),
-    text(valueAt(goalStack, 'relationship')),
-    text(valueAt(goalStack, 'action')),
-    text(valueAt(valueAt(goalStack, 'account_goal'), 'recognition_goal')),
-    ...listOf(valueAt(valueAt(goalStack, 'operating_goal'), 'current_focus')),
-  ].filter(Boolean));
+  return unique(
+    [
+      text(valueAt(goalStack, 'objective')),
+      text(valueAt(goalStack, 'recognition')),
+      text(valueAt(goalStack, 'trust')),
+      text(valueAt(goalStack, 'relationship')),
+      text(valueAt(goalStack, 'action')),
+      text(valueAt(valueAt(goalStack, 'account_goal'), 'recognition_goal')),
+      ...listOf(valueAt(valueAt(goalStack, 'operating_goal'), 'current_focus')),
+    ].filter(Boolean),
+  );
 }
 
 function hotZoneItems(zones: readonly HotZone[] | undefined): string[] {
@@ -365,7 +497,11 @@ function hotZoneItems(zones: readonly HotZone[] | undefined): string[] {
 function targetRows(account: AccountJson): TargetRow[] {
   const directTargets = valueAt(account, 'tracked_targets');
   const xTargets = account.x_action_system?.tracked_targets;
-  const source = Array.isArray(directTargets) ? directTargets : Array.isArray(xTargets) ? xTargets : null;
+  const source = Array.isArray(directTargets)
+    ? directTargets
+    : Array.isArray(xTargets)
+      ? xTargets
+      : null;
   if (source) {
     return source
       .map((item) => {
@@ -382,11 +518,13 @@ function targetRows(account: AccountJson): TargetRow[] {
   }
 
   const tracked = objectOf(xTargets);
-  return listOf(valueAt(tracked, 'usernames')).map((handle) => ({
-    handle: normalizeHandle(handle),
-    relationship: '追跡対象',
-    notes: DASH,
-  })).filter((row) => row.handle.length > 0);
+  return listOf(valueAt(tracked, 'usernames'))
+    .map((handle) => ({
+      handle: normalizeHandle(handle),
+      relationship: '追跡対象',
+      notes: DASH,
+    }))
+    .filter((row) => row.handle.length > 0);
 }
 
 function voiceExamples(account: AccountJson): Array<{ label: string; text: string }> {
