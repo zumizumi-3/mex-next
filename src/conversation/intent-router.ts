@@ -134,6 +134,12 @@ export interface ClassifyIntentOptions {
   userText: string;
   bridge: LlmProvider;
   locale?: 'ja';
+  /**
+   * Optional emit hook so the caller can record the classification as a
+   * judgment event (kind='intent_classify_result'). Pure side-channel —
+   * the router never blocks on this.
+   */
+  onClassified?: (info: { input: string; result: IntentResult }) => void;
 }
 
 /**
@@ -149,8 +155,17 @@ export async function classifyIntent(
   opts: ClassifyIntentOptions,
 ): Promise<IntentResult> {
   const text = (opts.userText ?? '').trim();
+  const emit = (result: IntentResult): IntentResult => {
+    try {
+      opts.onClassified?.({ input: text, result });
+    } catch {
+      // emitter must never throw out of the classifier
+    }
+    return result;
+  };
+
   if (text.length === 0) {
-    return fallback('empty_input');
+    return emit(fallback('empty_input'));
   }
 
   const locale = opts.locale ?? 'ja';
@@ -165,21 +180,21 @@ export async function classifyIntent(
     rawText = (response.text ?? '').trim();
   } catch (err) {
     if (err instanceof LlmTimeoutError) {
-      return fallback('timeout');
+      return emit(fallback('timeout'));
     }
-    return fallback('provider_error');
+    return emit(fallback('provider_error'));
   }
 
   const parsed = parseLlmJson(rawText);
   if (!parsed) {
-    return { ...fallback('invalid_json'), rawResponse: rawText };
+    return emit({ ...fallback('invalid_json'), rawResponse: rawText });
   }
 
   const candidateIntent = String((parsed as Record<string, unknown>).intent ?? '')
     .trim()
     .toLowerCase();
   if (!isSupportedIntent(candidateIntent)) {
-    return { ...fallback('unsupported_intent'), rawResponse: rawText };
+    return emit({ ...fallback('unsupported_intent'), rawResponse: rawText });
   }
   const intent: IntentName = candidateIntent;
 
@@ -199,7 +214,7 @@ export async function classifyIntent(
   if (confirmationMessage) {
     result.confirmationMessage = confirmationMessage;
   }
-  return result;
+  return emit(result);
 }
 
 function isSupportedIntent(value: string): value is IntentName {

@@ -28,6 +28,7 @@ const ConfigSchema = z.object({
   pendingTurnStorePath: z.string().min(1),
   sessionStorePath: z.string().min(1),
   approvalStorePath: z.string().min(1),
+  judgmentEventsPath: z.string().min(1),
   discordChannelMap: z.record(z.string(), z.string()).default({}),
   /**
    * Legacy: in-process collector loop. Now disabled by default — collectors
@@ -95,6 +96,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     ),
     approvalStorePath: pathFor(env, 'APPROVAL_STORE_PATH', () =>
       `${runtimeDir}/approvals-${accountId || 'default'}.jsonl`,
+    ),
+    judgmentEventsPath: pathFor(env, 'JUDGMENT_EVENTS_PATH', () =>
+      `${runtimeDir}/judgment-events-${accountId || 'default'}.jsonl`,
     ),
     discordChannelMap: parseChannelMap(env),
     collectorsEnabled: parseBool(env.COLLECTORS_ENABLED, false),

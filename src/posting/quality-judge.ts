@@ -181,23 +181,31 @@ function normalize(parsed: Record<string, unknown>, raw: string): QualityResult 
  * The LLM bridge call is wrapped so that a transport / parse error
  * produces a deterministic `pass: false, failureAxes: [...all]` result.
  * Caller can then route to `repairing` or `awaiting_decision`.
+ *
+ * `onJudged` is an optional side-channel for the judgment-event sink
+ * (`{ kind: 'quality_judge_result', payload: { axes, pass } }`). It
+ * must not throw — the judge swallows callback failures.
  */
 export async function judgeQuality(opts: {
   candidateText: string;
   account: AccountJson;
   bridge: LlmProvider;
+  onJudged?: (info: { result: QualityResult }) => void;
 }): Promise<QualityResult> {
   const payload = buildJudgePayload({ candidateText: opts.candidateText, account: opts.account });
 
   let raw = '';
+  let result: QualityResult;
   try {
     const response = await opts.bridge.generate({
       kind: QUALITY_JUDGE_KIND,
       payload,
     });
     raw = response.text ?? '';
+    const parsed = parseJudgePayload(raw);
+    result = normalize(parsed, raw);
   } catch (error: unknown) {
-    return {
+    result = {
       scores: QUALITY_AXES.map((axis) => ({ axis, score: 0, comment: 'judge_error' })),
       pass: false,
       failureAxes: [...QUALITY_AXES],
@@ -205,6 +213,10 @@ export async function judgeQuality(opts: {
     };
   }
 
-  const parsed = parseJudgePayload(raw);
-  return normalize(parsed, raw);
+  try {
+    opts.onJudged?.({ result });
+  } catch {
+    // observability hooks never bubble up
+  }
+  return result;
 }

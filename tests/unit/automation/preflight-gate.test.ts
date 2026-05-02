@@ -66,6 +66,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     pendingTurnStorePath: `${workDir}/pending.json`,
     sessionStorePath: `${workDir}/sessions.json`,
     approvalStorePath: `${workDir}/approvals.jsonl`,
+    judgmentEventsPath: `${workDir}/judgments.jsonl`,
     discordChannelMap: {},
     collectorsEnabled: false,
     collectorIntervalMs: 30 * 60 * 1000,

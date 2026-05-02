@@ -12,6 +12,7 @@ import type { AccountRepo } from '../account-state/repo.js';
 import type { AppConfig } from '../config.js';
 import type { DiscordPoster } from '../posting/collectors/types.js';
 import type { XApiSurface } from '../x-api/types.js';
+import type { JudgmentEventStream } from '../observability/judgment-events.js';
 import {
   runPreflight,
   type GateResult,
@@ -34,6 +35,8 @@ export interface PreflightOrEscalateOpts {
   >;
   /** Inject "now" so dedup is deterministic in tests. */
   readonly now?: () => Date;
+  /** Optional judgment-event sink — emits one `preflight` event per run. */
+  readonly judgmentEvents?: JudgmentEventStream;
 }
 
 /**
@@ -52,6 +55,23 @@ export async function preflightOrEscalate(
     accountsRegistryPath: opts.accountsRegistryPath,
     ...(opts.preflightOverrides ?? {}),
   });
+
+  if (opts.judgmentEvents) {
+    void opts.judgmentEvents
+      .emit({
+        accountId: opts.config.accountId,
+        kind: 'preflight',
+        payload: {
+          ok: result.ok,
+          gates: result.gates.map((g) => ({
+            name: g.name,
+            status: g.status,
+            message: g.message,
+          })),
+        },
+      })
+      .catch(() => undefined);
+  }
 
   if (result.failed.length === 0) {
     return result;

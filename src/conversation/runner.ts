@@ -66,8 +66,7 @@ export class IntentDrivenRunner implements ConversationRunner {
 
     // Onboarding bypass: when an active onboarding session exists, take
     // the customer's raw text as the answer to the current question
-    // instead of running the intent classifier. This stops the LLM from
-    // mis-routing free-form answers ("ずみさん") to e.g. target.add.
+    // instead of running the intent classifier.
     try {
       const collector = new OnboardingCollector({
         repo: this.handlerContext.repo,
@@ -106,12 +105,29 @@ export class IntentDrivenRunner implements ConversationRunner {
         { error: error instanceof Error ? error.message : String(error) },
         'onboarding_bypass_failed',
       );
-      // fall through to intent classification on any error
     }
 
+    const judgmentEvents = this.handlerContext.judgmentEvents;
+    const accountId = this.handlerContext.accountId;
     const intent: IntentResult = await classifyIntent({
       userText,
       bridge: this.bridge,
+      onClassified: judgmentEvents
+        ? ({ input, result }): void => {
+            void judgmentEvents
+              .emit({
+                accountId,
+                kind: 'intent_classify_result',
+                payload: {
+                  input,
+                  intent: result.intent,
+                  confirmationNeeded: result.confirmationNeeded,
+                  fallbackReason: result.fallbackReason ?? null,
+                },
+              })
+              .catch(() => undefined);
+          }
+        : undefined,
     });
 
     if (abortSignal.aborted) {

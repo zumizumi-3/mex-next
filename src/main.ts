@@ -18,6 +18,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadConfig, type AppConfig } from './config.js';
 import { createLogger } from './observability/logger.js';
+import { JudgmentEventStream } from './observability/judgment-events.js';
 import { createDiscordClient } from './discord/client.js';
 import { handleDiscordMessage } from './discord/message-handler.js';
 import { handleDiscordInteraction } from './discord/interactions.js';
@@ -39,8 +40,13 @@ import { XApiClient } from './x-api/client.js';
 import { buildHandlers, type HandlerContext } from './handlers/index.js';
 import { asPostingRepo } from './handlers/repo-adapter.js';
 import type { LlmProviderLike } from './posting/collectors/types.js';
+import { GracefulShutdown, bindShutdownSignals } from './lifecycle/graceful-shutdown.js';
 
-function buildLlmBridge(config: AppConfig): LlmProvider {
+function buildLlmBridge(
+  config: AppConfig,
+  log: ReturnType<typeof createLogger>,
+  discordPoster: DiscordPosterImpl,
+): LlmProvider {
   const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
   const anthropic = createAnthropicSdkProvider({
     messages: {
@@ -48,10 +54,37 @@ function buildLlmBridge(config: AppConfig): LlmProvider {
     },
   });
   const claudeCode = createClaudeCodeProvider({});
-  return createBridge({ anthropic, claudeCode });
+  return createBridge({
+    anthropic,
+    claudeCode,
+    resilience: {
+      attempts: 3,
+      initialDelayMs: 500,
+      maxDelayMs: 30_000,
+      failureThreshold: 5,
+      resetTimeoutMs: 30_000,
+      halfOpenAttempts: 1,
+    },
+    onCircuitOpen: (err, ctx) => {
+      log.error({ err: err.message, kind: ctx.kind }, 'llm_circuit_open');
+      // Best-effort operator escalation. Failures are swallowed so the
+      // surrounding code path keeps progressing.
+      void discordPoster
+        .postEscalation({
+          channelRole: 'operator',
+          content: `⚠️ LLM 一時的に利用不可 (kind=\`${ctx.kind}\`)。回路 open のため一時退避中です。`,
+          metadata: { source: 'llm_bridge', circuit: 'open', kind: ctx.kind },
+        })
+        .catch(() => undefined);
+    },
+  });
 }
 
-function buildXApiClient(config: AppConfig): XApiClient | undefined {
+function buildXApiClient(
+  config: AppConfig,
+  log: ReturnType<typeof createLogger>,
+  discordPoster: DiscordPosterImpl,
+): XApiClient | undefined {
   if (
     !config.xApiConsumerKey ||
     !config.xApiConsumerSecret ||
@@ -60,12 +93,30 @@ function buildXApiClient(config: AppConfig): XApiClient | undefined {
   ) {
     return undefined;
   }
-  return new XApiClient({
-    consumerKey: config.xApiConsumerKey,
-    consumerSecret: config.xApiConsumerSecret,
-    accessToken: config.xApiAccessToken,
-    accessTokenSecret: config.xApiAccessTokenSecret,
-  });
+  return new XApiClient(
+    {
+      consumerKey: config.xApiConsumerKey,
+      consumerSecret: config.xApiConsumerSecret,
+      accessToken: config.xApiAccessToken,
+      accessTokenSecret: config.xApiAccessTokenSecret,
+    },
+    {
+      maxRetries: 2,
+      initialBackoffMs: 1_000,
+      maxBackoffMs: 30_000,
+      circuit: { failureThreshold: 5, resetTimeoutMs: 60_000, halfOpenAttempts: 1 },
+      onCircuitOpen: (err) => {
+        log.error({ err: err.message }, 'x_api_circuit_open');
+        void discordPoster
+          .postEscalation({
+            channelRole: 'operator',
+            content: '⚠️ X API 一時的に利用不可。回路 open のため一時退避中です。',
+            metadata: { source: 'x_api', circuit: 'open' },
+          })
+          .catch(() => undefined);
+      },
+    },
+  );
 }
 
 async function main(): Promise<void> {
@@ -75,12 +126,16 @@ async function main(): Promise<void> {
   log.info({ accountId: config.accountId }, 'mex-next booting');
 
   const repo = new AccountRepo(config.accountRepo);
-  const bridge = buildLlmBridge(config);
-  const xApi = buildXApiClient(config);
   const client = createDiscordClient({ logger: log });
   const poster = new DiscordPosterImpl(client, {
     channelMap: config.discordChannelMap,
     logger: log,
+  });
+  const bridge = buildLlmBridge(config, log, poster);
+  const xApi = buildXApiClient(config, log, poster);
+
+  const judgmentEvents = new JudgmentEventStream({
+    filePath: config.judgmentEventsPath,
   });
 
   const pendingTurnStore = new PendingTurnStore({ filePath: config.pendingTurnStorePath });
@@ -95,6 +150,7 @@ async function main(): Promise<void> {
     discordPoster: poster,
     logger: log,
     operatorDiscordUserIds: config.operatorDiscordUserIds,
+    judgmentEvents,
     ...(xApi ? { xApi } : {}),
   };
 
@@ -165,21 +221,52 @@ async function main(): Promise<void> {
 
   await client.login(config.discordBotToken);
 
-  await new Promise<void>((resolve) => {
-    const shutdown = (signal: string): void => {
-      log.info({ signal }, 'signal_received_shutting_down');
-      try {
-        void client.destroy();
-      } catch {
-        // ignore
-      }
-      resolve();
-    };
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
+  const shutdown = new GracefulShutdown({ logger: log, defaultTimeoutMs: 5_000 });
+
+  // Discord client teardown (registered first so it tears down LAST).
+  shutdown.register({
+    name: 'discord_client',
+    timeoutMs: 5_000,
+    run: async () => {
+      await client.destroy();
+    },
   });
 
-  log.info('mex-next shutdown');
+  shutdown.register({
+    name: 'pending_turn_store_flush',
+    timeoutMs: 2_000,
+    run: async () => {
+      // Disk-backed stores flush synchronously per write; placeholder
+      // for future buffered impls.
+    },
+  });
+
+  shutdown.register({
+    name: 'judgment_events_flush',
+    timeoutMs: 3_000,
+    run: async () => {
+      await judgmentEvents.flush();
+    },
+  });
+
+  // Reset breakers last so the next process start sees a clean slate.
+  shutdown.register({
+    name: 'reset_x_api_circuit',
+    timeoutMs: 500,
+    run: async () => {
+      xApi?.resetCircuit();
+    },
+  });
+
+  await new Promise<void>((resolve) => {
+    bindShutdownSignals({
+      shutdown,
+      onComplete: (signal) => {
+        log.info({ signal }, 'mex-next shutdown');
+        resolve();
+      },
+    });
+  });
 }
 
 main().catch((error: unknown) => {

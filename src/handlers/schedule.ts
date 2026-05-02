@@ -147,6 +147,13 @@ export async function handleSchedulePublishNow(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markFailed({ repo: asPostingRepo(ctx.repo), publishId: target.publish_id, reason: `publish_now_failed: ${message}` });
+    void ctx.judgmentEvents
+      ?.emit({
+        accountId: ctx.accountId,
+        kind: 'publish_failed',
+        payload: { publishId: target.publish_id, reason: message, source: 'publish_now' },
+      })
+      .catch(() => undefined);
     return {
       content: `❌ 投稿に失敗しました: ${message}`,
       tag: 'schedule.publish_now.fail',
