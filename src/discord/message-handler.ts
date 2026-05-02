@@ -146,10 +146,14 @@ export async function handleDiscordMessage(
         kind: message.channel.isDMBased() ? 'dm-message' : 'user-message',
         onStatus,
       });
-      await progress.done();
-      if (!result.suppressReply && result.output.trim()) {
-        await sendSafe(message.channel, result.output, log);
-      }
+      // Edit the progress message in-place with the final response. This
+      // keeps everything in a single Discord message slot instead of
+      // posting "✅ 完了" + a follow-up. If output is empty we still close
+      // the indicator with the default ✅.
+      const finalText = !result.suppressReply ? result.output.trim() : '';
+      await progress.done(finalText || undefined);
+      // If suppressReply is false but output is empty, progress.done() already
+      // showed ✅ — that's the right UX (handler explicitly returned nothing).
     });
   } catch (error) {
     if (error instanceof TurnCancelledError) {
@@ -160,8 +164,7 @@ export async function handleDiscordMessage(
       { conversationKey, error: errMsg(error) },
       'message_handler_failed',
     );
-    await progress.failed();
-    await sendSafe(message.channel, formatUserFacingError(error), log);
+    await progress.failed(formatUserFacingError(error));
   }
 }
 

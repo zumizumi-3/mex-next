@@ -29,11 +29,119 @@ function isActive(item: PublishItem): boolean {
   return item.status === 'scheduled' || item.status === 'held';
 }
 
-function formatItemLine(item: PublishItem): string {
-  const emoji = STATUS_EMOJI[item.status] ?? '•';
-  const when = item.scheduled_at ? formatJst(item.scheduled_at) : '(time?)';
-  const preview = (item.text_prefix ?? '').slice(0, 40) || '(no preview)';
-  return `${emoji} \`${item.publish_id}\` ${when} — ${preview}`;
+function jstDateString(at: Date): string {
+  // YYYY-MM-DD in JST
+  const jst = new Date(at.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 10);
+}
+
+function jstHHMM(at: Date): string {
+  const jst = new Date(at.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(11, 16);
+}
+
+interface EnrichedItem {
+  item: PublishItem;
+  when: Date | null;
+  preview: string;
+  isPastDue: boolean;
+}
+
+async function enrichItems(
+  ctx: HandlerContext,
+  items: PublishItem[],
+  now: Date,
+): Promise<EnrichedItem[]> {
+  const out: EnrichedItem[] = [];
+  for (const item of items) {
+    let when: Date | null = null;
+    if (item.scheduled_at) {
+      const parsed = new Date(item.scheduled_at);
+      if (!Number.isNaN(parsed.getTime())) when = parsed;
+    }
+    let preview = '';
+    try {
+      const draft = await ctx.repo.loadDraftText(item.content_id);
+      preview = (draft?.text ?? '').replace(/\s+/g, ' ').trim();
+    } catch {
+      preview = '';
+    }
+    if (!preview) preview = (item.text_prefix ?? '').replace(/\s+/g, ' ').trim();
+    if (preview.length > 80) preview = preview.slice(0, 80) + '…';
+    const isPastDue = when !== null && when.getTime() < now.getTime();
+    out.push({ item, when, preview, isPastDue });
+  }
+  return out;
+}
+
+function groupItems(enriched: EnrichedItem[], now: Date): {
+  today: EnrichedItem[];
+  tomorrow: EnrichedItem[];
+  later: EnrichedItem[];
+  pastDue: EnrichedItem[];
+  unknown: EnrichedItem[];
+} {
+  const today = jstDateString(now);
+  const tomorrowDate = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const tomorrow = jstDateString(tomorrowDate);
+  const groups = {
+    today: [] as EnrichedItem[],
+    tomorrow: [] as EnrichedItem[],
+    later: [] as EnrichedItem[],
+    pastDue: [] as EnrichedItem[],
+    unknown: [] as EnrichedItem[],
+  };
+  for (const e of enriched) {
+    if (!e.when) {
+      groups.unknown.push(e);
+      continue;
+    }
+    if (e.isPastDue) {
+      groups.pastDue.push(e);
+      continue;
+    }
+    const day = jstDateString(e.when);
+    if (day === today) groups.today.push(e);
+    else if (day === tomorrow) groups.tomorrow.push(e);
+    else groups.later.push(e);
+  }
+  for (const arr of Object.values(groups)) {
+    arr.sort((a, b) => (a.when?.getTime() ?? 0) - (b.when?.getTime() ?? 0));
+  }
+  return groups;
+}
+
+function detectSameTimeConflicts(enriched: EnrichedItem[]): string[] {
+  // Group by HH:MM (JST), report buckets with 2+ items.
+  const buckets = new Map<string, EnrichedItem[]>();
+  for (const e of enriched) {
+    if (!e.when) continue;
+    const key = `${jstDateString(e.when)} ${jstHHMM(e.when)}`;
+    const list = buckets.get(key) ?? [];
+    list.push(e);
+    buckets.set(key, list);
+  }
+  const warnings: string[] = [];
+  for (const [key, list] of buckets) {
+    if (list.length >= 2) {
+      warnings.push(`${key} JST: ${list.length} 件被り`);
+    }
+  }
+  return warnings;
+}
+
+function renderItem(e: EnrichedItem): string {
+  const emoji = STATUS_EMOJI[e.item.status] ?? '•';
+  const when = e.when ? `${jstDateString(e.when)} ${jstHHMM(e.when)} JST` : '(time?)';
+  const preview = e.preview || '(本文なし)';
+  return `${emoji} ${when} — ${preview}\n  \`${e.item.publish_id}\``;
+}
+
+function renderSection(title: string, items: EnrichedItem[]): string {
+  if (items.length === 0) return '';
+  const lines = [`**${title}** (${items.length})`];
+  for (const e of items) lines.push(renderItem(e));
+  return lines.join('\n');
 }
 
 export async function handleScheduleList(
@@ -46,11 +154,39 @@ export async function handleScheduleList(
   if (active.length === 0) {
     return { content: '🗓️ 予約はありません。', tag: 'schedule.list' };
   }
-  const lines = ['🗓️ 予約一覧'];
-  for (const item of active) {
-    lines.push(formatItemLine(item));
+  const now = new Date();
+  const enriched = await enrichItems(ctx, active, now);
+  const groups = groupItems(enriched, now);
+  const conflicts = detectSameTimeConflicts(enriched);
+
+  const sections: string[] = [];
+  sections.push(`🗓️ **予約 ${active.length} 件**`);
+  if (conflicts.length > 0) {
+    sections.push(`⚠️ 同時刻に複数予約があります:\n  - ${conflicts.join('\n  - ')}`);
   }
-  return { content: lines.join('\n'), tag: 'schedule.list' };
+  if (groups.pastDue.length > 0) {
+    sections.push(
+      [
+        `⚠️ **過去時刻 / 未実行 (${groups.pastDue.length})**`,
+        ...groups.pastDue.map(renderItem),
+      ].join('\n'),
+    );
+  }
+  const todayBlock = renderSection('⏰ 本日中', groups.today);
+  if (todayBlock) sections.push(todayBlock);
+  const tomBlock = renderSection('📅 明日', groups.tomorrow);
+  if (tomBlock) sections.push(tomBlock);
+  const laterBlock = renderSection('🔮 以降', groups.later);
+  if (laterBlock) sections.push(laterBlock);
+  const unkBlock = renderSection('❓ 時刻不明', groups.unknown);
+  if (unkBlock) sections.push(unkBlock);
+
+  sections.push('');
+  sections.push(
+    '取消したい時は「`08:32 取り消して`」、即時投稿したい時は「`pub_xxx 今すぐ投稿`」のように話しかけてください。',
+  );
+
+  return { content: sections.join('\n\n'), tag: 'schedule.list' };
 }
 
 function findItem(queue: PublishItem[], args: HandlerArgs): PublishItem | undefined {
