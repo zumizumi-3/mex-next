@@ -72,6 +72,106 @@ function convertSessionDictToArray(
 }
 
 /**
+ * Python 版にはあって mex-next では廃止された posting state を、最も近い
+ * 新 state にマップする。`last_error` が object のときは文字列化する。
+ */
+const POSTING_STATE_REMAP: Record<string, string> = {
+  failed_recoverable: 'repairing',
+  completed: 'published',
+  failed: 'failed_terminal',
+  cancelled: 'failed_terminal',
+  cancelled_by_user: 'failed_terminal',
+  // 既知の新 state は touch しない (恒等マップは不要)
+};
+
+function coercePostingSessionShape(
+  state: Record<string, unknown>,
+  changes: string[]
+): Record<string, unknown> {
+  const sessions = state['posting_sessions'];
+  if (!Array.isArray(sessions)) return state;
+  let mutated = false;
+  const migrated = sessions.map((s, idx) => {
+    if (!isPlainObject(s)) return s;
+    let session = s;
+    const stateValue = String(session['state'] ?? '');
+    if (stateValue && POSTING_STATE_REMAP[stateValue]) {
+      session = { ...session, state: POSTING_STATE_REMAP[stateValue] };
+      changes.push(
+        `posting_sessions[${idx}].state: "${stateValue}" → "${POSTING_STATE_REMAP[stateValue]}"`,
+      );
+      mutated = true;
+    }
+    const lastError = session['last_error'];
+    if (lastError !== undefined && typeof lastError !== 'string') {
+      session = {
+        ...session,
+        last_error: lastError === null ? '' : JSON.stringify(lastError),
+      };
+      changes.push(`posting_sessions[${idx}].last_error: object→string`);
+      mutated = true;
+    }
+    return session;
+  });
+  if (!mutated) return state;
+  return { ...state, posting_sessions: migrated };
+}
+
+const TARGET_DISCOVERY_STATUS_REMAP: Record<string, string> = {
+  ready: 'open',
+  pending: 'open',
+  done: 'posted',
+  posted: 'posted',
+  open: 'open',
+  skipped: 'skipped',
+  error: 'error',
+  failed: 'error',
+};
+
+function coerceTargetDiscoverySessions(
+  state: Record<string, unknown>,
+  changes: string[]
+): Record<string, unknown> {
+  const tgt = state['target_discovery_sessions'];
+  if (!isPlainObject(tgt)) return state;
+  let mutated = false;
+  const migrated: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(tgt)) {
+    if (!isPlainObject(value)) {
+      migrated[key] = value;
+      continue;
+    }
+    let session = value;
+    if (!session['event_id']) {
+      session = { ...session, event_id: key };
+      changes.push(`target_discovery_sessions[${key}].event_id: filled from key`);
+      mutated = true;
+    }
+    const statusValue = String(session['status'] ?? '');
+    if (statusValue && TARGET_DISCOVERY_STATUS_REMAP[statusValue]) {
+      const remapped = TARGET_DISCOVERY_STATUS_REMAP[statusValue];
+      if (remapped !== statusValue) {
+        session = { ...session, status: remapped };
+        changes.push(
+          `target_discovery_sessions[${key}].status: "${statusValue}" → "${remapped}"`,
+        );
+        mutated = true;
+      }
+    } else if (statusValue) {
+      // 未知値は open に倒す
+      session = { ...session, status: 'open' };
+      changes.push(
+        `target_discovery_sessions[${key}].status: unknown "${statusValue}" → "open"`,
+      );
+      mutated = true;
+    }
+    migrated[key] = session;
+  }
+  if (!mutated) return state;
+  return { ...state, target_discovery_sessions: migrated };
+}
+
+/**
  * `publish_queue` が dict 形式の旧データを array に変換。
  */
 function normalizePublishQueue(
@@ -166,6 +266,8 @@ export function migrateState(input: unknown): MigrationResult<StateJson> {
   working = convertSessionDictToArray(working, changes);
   working = normalizePublishQueue(working, changes);
   working = ensureRuntimeFields(working, changes);
+  working = coercePostingSessionShape(working, changes);
+  working = coerceTargetDiscoverySessions(working, changes);
 
   // zod の default が残りの field を埋める (parse 時に変更検出は難しいので、
   // pre/post の key 数で簡易的に追加 changes を出す)
