@@ -437,21 +437,52 @@ export function firstQuestion(): OnboardingQuestion {
   return first;
 }
 
-/** Resolve a select-style answer (label / key / lowercased) to the canonical key. */
+/** Resolve a select-style answer (label / key / lowercased) to the canonical key.
+ *
+ * Lenient on purpose: the rendered question shows the customer
+ * "<label> (<key>) — <tagline>" so a copy-paste of any of the three
+ * pieces (or the whole thing) should resolve.
+ */
 export function resolveChoiceKey(
   question: OnboardingQuestion,
   answer: string,
 ): string | null {
   if (!question.options) return null;
-  const normalized = answer.trim().toLowerCase();
-  if (!normalized) return null;
+  const trimmed = answer.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase();
+
+  // 1) Exact match (key / label, case-insensitive).
   for (const opt of question.options) {
+    if (opt.key.toLowerCase() === normalized || opt.label.toLowerCase() === normalized) {
+      return opt.key;
+    }
+  }
+
+  // 2) Pattern "<label> (<key>) — <tagline>" — pull the (<key>) and look it up.
+  const parenMatch = trimmed.match(/[(（]([a-z][a-z0-9_]*)[)）]/i);
+  if (parenMatch) {
+    const candidate = parenMatch[1]?.toLowerCase();
+    if (candidate) {
+      for (const opt of question.options) {
+        if (opt.key.toLowerCase() === candidate) return opt.key;
+      }
+    }
+  }
+
+  // 3) startsWith match — handles "伴走パートナー (corporate_partner) — ..."
+  // and the customer typing just "伴走パートナー です" / "伴走パートナーがいい".
+  for (const opt of question.options) {
+    const labelLower = opt.label.toLowerCase();
+    const keyLower = opt.key.toLowerCase();
     if (
-      opt.key.toLowerCase() === normalized ||
-      opt.label.toLowerCase() === normalized
+      normalized.startsWith(labelLower) ||
+      normalized.startsWith(keyLower) ||
+      normalized.includes(labelLower)
     ) {
       return opt.key;
     }
   }
+
   return null;
 }
