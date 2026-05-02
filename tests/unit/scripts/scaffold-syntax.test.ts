@@ -9,6 +9,7 @@ describe('scaffold bash syntax', () => {
     'scripts/create-account-repo.sh',
     'scripts/bootstrap.sh',
     'scripts/migrate-from-python.sh',
+    'scripts/recover.sh',
   ])('bash -n %s', async (script) => {
     await expect(execFileAsync('bash', ['-n', script])).resolves.toBeDefined();
   });

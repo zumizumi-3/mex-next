@@ -209,7 +209,25 @@ sudo journalctl -u mex-bot --since "1 week ago" | grep "x_api_rate_limit"
 - X API tier 使用率の振り返り
 - self-update timer が正常に走っているか journalctl で確認
 
-## 11. 関連 docs
+## 11. VPS 復旧
+
+bot が乗っていた VPS が飛んだ / 引っ越し時:
+
+```bash
+ssh root@<NEW_VPS>
+curl -fsSL https://raw.githubusercontent.com/zumizumi-3/mex-next/main/scripts/install.sh | bash
+bash /opt/mex-next/scripts/recover.sh <account-id> <github-owner>/<repo-name>
+```
+
+入力するもの:
+
+- Doppler service token
+- Discord channel ID
+- operator user IDs
+
+GitHub 上の account_repo に auto push された `state.json` / `account.json` から復旧します。
+
+## 12. 関連 docs
 
 - [21-monitoring.md](./21-monitoring.md)
 - [50-troubleshooting.md](./50-troubleshooting.md)
