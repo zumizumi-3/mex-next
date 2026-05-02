@@ -46,7 +46,7 @@ describe('runConversationTurn', () => {
 
     expect(result.output).toBe('ok');
     expect(observedPending).not.toBeNull();
-    expect(observedPending?.kind).toBe('user-message');
+    expect((observedPending as { kind: string } | null)?.kind).toBe('user-message');
     // After completion, the record must be cleared
     expect(pendingStore.listRecords()).toEqual([]);
   });

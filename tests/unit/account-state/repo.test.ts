@@ -91,9 +91,8 @@ describe('AccountRepo', () => {
     // state に runtime な counter を持たせる (passthrough field を使う)
     await repo.writeState({
       ...(await repo.readState()),
-      // @ts-expect-error passthrough field
       _counter: 0,
-    });
+    } as never);
 
     const ops = Array.from({ length: 5 }, () =>
       repo.withState(async (state) => {
