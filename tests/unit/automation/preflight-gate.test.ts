@@ -63,6 +63,12 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     operatorDiscordUserIds: ['oper-1'],
     githubToken: undefined,
     logLevel: 'info',
+    pendingTurnStorePath: `${workDir}/pending.json`,
+    sessionStorePath: `${workDir}/sessions.json`,
+    approvalStorePath: `${workDir}/approvals.jsonl`,
+    discordChannelMap: {},
+    collectorsEnabled: false,
+    collectorIntervalMs: 30 * 60 * 1000,
     ...overrides,
   };
 }
