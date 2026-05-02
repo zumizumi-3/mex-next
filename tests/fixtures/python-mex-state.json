@@ -1,0 +1,102 @@
+{
+  "account_id": "replace_me",
+  "current_phase": "needs_diagnosis",
+  "active_window": {
+    "status": "needs_definition",
+    "primary_gap": "",
+    "expertise_priority": [],
+    "authority_priority": [],
+    "worldview_priority": [],
+    "human_priority": [],
+    "conversation_priority": [],
+    "series_priority": [],
+    "suppress": [],
+    "updated_at": ""
+  },
+  "surface_plan": {
+    "status": "needs_definition",
+    "objective_surface": "",
+    "original_posts": "",
+    "replies": "",
+    "quotes": "",
+    "follow_ups": "",
+    "asset_reuse": "",
+    "rationale": "",
+    "updated_at": ""
+  },
+  "measurement_plan": {
+    "status": "needs_definition",
+    "primary_signals": [],
+    "secondary_signals": [],
+    "review_cadence": [],
+    "decision_rules": [],
+    "updated_at": ""
+  },
+  "research_scan": {
+    "status": "pending",
+    "scan_id": "",
+    "scan_path": "",
+    "candidate_count": 0,
+    "updated_at": ""
+  },
+  "role_queue": [],
+  "next_actions": [],
+  "content_order": [],
+  "active_content_ids": [],
+  "conversation_queue": [],
+  "interaction_queue": [],
+  "approval_queue": [],
+  "alert_queue": [],
+  "publish_queue": [],
+  "interaction_runtime": {
+    "last_polled_at": "",
+    "last_reply_scan_at": "",
+    "last_tracked_scan_at": "",
+    "seen_event_keys": [],
+    "last_detected_event_count": 0
+  },
+  "trigger_runtime": {
+    "last_runs": {
+      "daily_start": "",
+      "daily_auto_post": "",
+      "interaction_poll": "",
+      "rolling_review": "",
+      "weekly_review": "",
+      "monthly_review": "",
+      "quarterly_review": "",
+      "metrics_fetch": "",
+      "competitor_reflect": "",
+      "phase_tick": "",
+      "content_retrospective": "",
+      "content_tick": "",
+      "cadence_tune": "",
+      "identity_refresh": "",
+      "scheduler_export": "",
+      "source_assets_sync": ""
+    },
+    "last_cycle_at": ""
+  },
+  "canonical_files": [
+    "account.json",
+    "state.json",
+    "content/<content_id>/content.json",
+    "ledger.jsonl"
+  ],
+  "external_source_runtime": {
+    "last_fetch_at": "",
+    "last_error": ""
+  },
+  "identity_runtime": {
+    "last_extracted_at": "",
+    "last_command": ""
+  },
+  "competitor_suggestions": {},
+  "reviews": {
+    "monthly": [],
+    "quarterly": [],
+    "half": []
+  },
+  "weekly_retro_sessions": {},
+  "periodic_retro_sessions": {},
+  "updated_at": ""
+}
