@@ -4,6 +4,22 @@ X (Twitter) アカウント運用 OS の Node.js + TypeScript 完全リライト
 
 `zumizumi-3/mex` (Python 実装、50K 行) の **設計と方向性のみ継承** し、Discord 体験は `wah-office-v2` のパターンを移植して再構築。
 
+## Status
+
+![CI](https://github.com/zumizumi-3/mex-next/actions/workflows/ci.yml/badge.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
+![TypeScript](https://img.shields.io/badge/typescript-strict-blue)
+
+(badge URL は repo 公開後の実 URL に差し替え予定)
+
+## Quick start
+
+```bash
+npm install   # 依存 install + husky hook 登録
+npm run dev   # tsx で hot reload 起動
+npm test      # vitest run
+```
+
 ## なぜリライトしたか
 
 Python 実装で 1 ヶ月運用したところ、本質的な詰まりが Discord 対話レイヤーに集中していた:

@@ -8,20 +8,20 @@
 
 ## 1. 移植対応表
 
-| pattern | wah-office-v2 (JS) | mex-next (TS) |
-| --- | --- | --- |
-| Message handler | `src/discord-message-handler.js` | `src/discord/message-handler.ts` |
-| Conversation lock | `src/conversation-locks.js` | `src/conversation/conversation-locks.ts` |
-| Pending turn store | `src/pending-turn-store.js` | `src/conversation/pending-turn-store.ts` |
-| Turn orchestrator | `src/turn-orchestrator.js` | `src/conversation/turn-orchestrator.ts` |
-| Progress indicator | `src/discord-status.js` | `src/discord/progress-indicator.ts` |
-| Approval store | `src/approval-store.js` | `src/discord/approval.ts` |
-| Reaction confirmation | `src/discord-confirmation.js` | `src/discord/confirmation.ts` |
-| Thread lifecycle | `src/discord-thread-lifecycle.js` | `src/discord/thread-lifecycle.ts` |
-| Auto-unarchive | `src/discord/auto-unarchive.js` | `src/discord/thread-lifecycle.ts` (統合) |
-| Session store | `src/session-store.js` | `src/conversation/session-store.ts` |
-| Judgment events | `src/judgment-events.js` | `src/observability/judgment-events.ts` |
-| Operator allowlist | (config) | `src/config.ts` |
+| pattern               | wah-office-v2 (JS)                | mex-next (TS)                            |
+| --------------------- | --------------------------------- | ---------------------------------------- |
+| Message handler       | `src/discord-message-handler.js`  | `src/discord/message-handler.ts`         |
+| Conversation lock     | `src/conversation-locks.js`       | `src/conversation/conversation-locks.ts` |
+| Pending turn store    | `src/pending-turn-store.js`       | `src/conversation/pending-turn-store.ts` |
+| Turn orchestrator     | `src/turn-orchestrator.js`        | `src/conversation/turn-orchestrator.ts`  |
+| Progress indicator    | `src/discord-status.js`           | `src/discord/progress-indicator.ts`      |
+| Approval store        | `src/approval-store.js`           | `src/discord/approval.ts`                |
+| Reaction confirmation | `src/discord-confirmation.js`     | `src/discord/confirmation.ts`            |
+| Thread lifecycle      | `src/discord-thread-lifecycle.js` | `src/discord/thread-lifecycle.ts`        |
+| Auto-unarchive        | `src/discord/auto-unarchive.js`   | `src/discord/thread-lifecycle.ts` (統合) |
+| Session store         | `src/session-store.js`            | `src/conversation/session-store.ts`      |
+| Judgment events       | `src/judgment-events.js`          | `src/observability/judgment-events.ts`   |
+| Operator allowlist    | (config)                          | `src/config.ts`                          |
 
 ## 2. message → handler のフロー
 
@@ -57,6 +57,26 @@ flowchart TB
 1 顧客 = 1 turn lock。並行発言は queue されて順次実行。
 turn の途中でユーザーが新メッセージを送ると、進行中 turn を **cancel** して新 turn に切替 (turn-cancellation)。
 
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant MH as message-handler
+    participant TO as turn-orchestrator
+    participant CL as conversation-locks
+    participant IR as intent-router
+    participant H as handlers
+    participant DP as DiscordPoster
+    U->>MH: messageCreate
+    MH->>TO: runTurn
+    TO->>CL: acquire(userId)
+    TO->>IR: classifyIntent
+    IR-->>TO: intent + args
+    TO->>H: dispatch(intent)
+    H-->>TO: result
+    TO->>DP: postMessage
+    TO->>CL: release
+```
+
 ```typescript
 const result = await turnOrchestrator.run({
   userId,
@@ -78,8 +98,13 @@ const result = await turnOrchestrator.run({
 async function acquireLock(userId: string): Promise<() => void> {
   const previous = locks.get(userId) ?? Promise.resolve();
   let release!: () => void;
-  const next = new Promise<void>((resolve) => { release = resolve; });
-  locks.set(userId, previous.then(() => next));
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  locks.set(
+    userId,
+    previous.then(() => next),
+  );
   await previous;
   return release;
 }
@@ -160,8 +185,7 @@ bot restart 後に進行中の draft 編集 thread を再開する:
 
 ```typescript
 // state.json の posting_sessions から ACTIVE_STATES のものを抽出
-const activeSessions = state.posting_sessions
-  .filter((s) => ACTIVE_STATES.has(s.state));
+const activeSessions = state.posting_sessions.filter((s) => ACTIVE_STATES.has(s.state));
 
 // 各 session の thread を pending として登録
 for (const session of activeSessions) {

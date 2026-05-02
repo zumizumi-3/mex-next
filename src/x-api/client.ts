@@ -172,6 +172,7 @@ export class XApiClient implements XApiSurface {
   private async runWithRetry<T>(kind: string, fn: () => Promise<T>): Promise<T> {
     let attempt = 0;
     let backoff = this.initialBackoffMs;
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
         return await fn();
@@ -237,7 +238,9 @@ function extractRawData(result: unknown): RawListPayload {
   if ('data' in paginator || 'includes' in paginator) {
     return {
       ...(paginator.data !== undefined ? { data: paginator.data as TweetV2[] | TweetV2 } : {}),
-      ...(paginator.includes !== undefined ? { includes: paginator.includes as { users?: UserV2[] } } : {}),
+      ...(paginator.includes !== undefined
+        ? { includes: paginator.includes as { users?: UserV2[] } }
+        : {}),
     };
   }
   return {};
@@ -303,7 +306,9 @@ function parseTweetPayload(raw: RawListPayload): TweetEvent[] {
   return result;
 }
 
-function pickReferenced(tweet: TweetV2): { id?: string; type?: 'replied_to' | 'quoted' | 'retweeted' } | null {
+function pickReferenced(
+  tweet: TweetV2,
+): { id?: string; type?: 'replied_to' | 'quoted' | 'retweeted' } | null {
   const refs = tweet.referenced_tweets;
   if (!Array.isArray(refs) || refs.length === 0) return null;
   const first = refs[0];

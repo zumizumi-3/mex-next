@@ -7,6 +7,8 @@
  * this layer, so we keep the shape simple but extensible.
  */
 
+/* eslint-disable no-control-regex */
+
 import { z } from 'zod';
 
 const ActorSchema = z
@@ -134,7 +136,9 @@ function optionalString(raw: unknown): string | null {
   if (raw === null || raw === undefined) {
     return null;
   }
-  const normalized = String(raw).replace(/\u0000/g, '').trim();
+  const normalized = String(raw)
+    .replace(/\u0000/g, '')
+    .trim();
   return normalized || null;
 }
 
