@@ -25,6 +25,8 @@ import { TurnCancelledError } from './turn-cancellation.js';
 import type { TurnMessage } from './turn-message.js';
 import type { HandlerContext, HandlersMap, HandlerArgs } from '../handlers/types.js';
 import type { LlmProvider } from '../llm/bridge.js';
+import { OnboardingCollector } from '../onboarding/collector.js';
+import { applyFreeFormAnswer } from '../handlers/onboarding.js';
 
 export interface IntentDrivenRunnerOptions {
   bridge: LlmProvider;
@@ -60,6 +62,51 @@ export class IntentDrivenRunner implements ConversationRunner {
     const userText = message.content.trim();
     if (!userText) {
       return { output: '何か書いてください。' };
+    }
+
+    // Onboarding bypass: when an active onboarding session exists, take
+    // the customer's raw text as the answer to the current question
+    // instead of running the intent classifier. This stops the LLM from
+    // mis-routing free-form answers ("ずみさん") to e.g. target.add.
+    try {
+      const collector = new OnboardingCollector({
+        repo: this.handlerContext.repo,
+        bridge: this.bridge,
+        logger: this.handlerContext.logger,
+      });
+      const active = await collector.getActive();
+      if (active) {
+        const lower = userText.toLowerCase();
+        const wantsCancel =
+          userText === 'やめる' ||
+          userText === '中止' ||
+          lower === 'cancel' ||
+          userText === 'オンボーディング中止' ||
+          userText === 'オンボやめる';
+        const wantsStatus =
+          userText === '状態' ||
+          userText === '進捗' ||
+          lower === 'status' ||
+          userText === '今どこ' ||
+          userText === '今どこまで';
+        if (!wantsCancel && !wantsStatus) {
+          const reply = await applyFreeFormAnswer(this.handlerContext, active, userText);
+          return {
+            output: reply,
+            metadata: {
+              intent: 'onboard.answer',
+              session_id: active.id,
+              question_id: active.currentQuestionId,
+            },
+          };
+        }
+      }
+    } catch (error) {
+      this.handlerContext.logger.warn?.(
+        { error: error instanceof Error ? error.message : String(error) },
+        'onboarding_bypass_failed',
+      );
+      // fall through to intent classification on any error
     }
 
     const intent: IntentResult = await classifyIntent({

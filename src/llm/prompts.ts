@@ -36,6 +36,9 @@ export const SUPPORTED_INTENT_NAMES: readonly string[] = [
   'cadence.skip_today',
   'status.show',
   'help.show',
+  'onboard.start',
+  'onboard.status',
+  'onboard.cancel',
   'unknown',
 ] as const;
 
@@ -54,6 +57,9 @@ const INTENT_ARG_SCHEMA_LINES = [
   'cadence.skip_today = no args',
   'status.show = no args',
   'help.show = no args',
+  'onboard.start = no args',
+  'onboard.status = no args',
+  'onboard.cancel = no args',
   'unknown = no args (use this when the request is unclear)',
 ];
 
@@ -62,7 +68,8 @@ const INTENT_RULES = [
     'deletes, immediately publishes, or globally changes automation. Examples: schedule.cancel, ' +
     'schedule.publish_now, cadence.skip_today, automation.enable_all, target.remove, cadence.set_*',
   'Confirmation is NOT required for display-only intents: schedule.list, schedule.detail, ' +
-    'target.list, automation.status, status.show, help.show.',
+    'target.list, automation.status, status.show, help.show, onboard.status.',
+  'onboard.cancel REQUIRES confirmation. onboard.start does NOT need confirmation.',
   'When confirmation_needed=true, ALWAYS include a short Japanese confirmation_message ' +
     '(1 sentence, ends with a question mark).',
   'Never invent fields outside the listed schema. If the user does not provide a value, omit the key.',
@@ -164,6 +171,31 @@ export const INTENT_FEW_SHOTS: readonly IntentExample[] = [
       args: {},
       confirmation_needed: true,
       confirmation_message: '投稿ペースを Light に切り替えますか？',
+    },
+  },
+  {
+    user: '最初から',
+    result: { intent: 'onboard.start', args: {}, confirmation_needed: false },
+  },
+  {
+    user: '初期設定したい',
+    result: { intent: 'onboard.start', args: {}, confirmation_needed: false },
+  },
+  {
+    user: 'オンボーディング始めて',
+    result: { intent: 'onboard.start', args: {}, confirmation_needed: false },
+  },
+  {
+    user: '今どこまで進んでる？',
+    result: { intent: 'onboard.status', args: {}, confirmation_needed: false },
+  },
+  {
+    user: 'オンボやめる',
+    result: {
+      intent: 'onboard.cancel',
+      args: {},
+      confirmation_needed: true,
+      confirmation_message: '進行中のオンボーディングを中断しますか？',
     },
   },
 ];
