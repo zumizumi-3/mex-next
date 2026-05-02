@@ -64,6 +64,7 @@ function makeXApi(plan: XApiPlan): XApiSurface {
       return plan.tweets?.[userId] ?? [];
     }),
     deleteTweet: vi.fn(),
+    likeTweet: vi.fn(),
   } as unknown as XApiSurface;
 }
 

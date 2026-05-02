@@ -169,6 +169,18 @@ export class XApiClient implements XApiSurface {
     });
   }
 
+  async likeTweet(tweetId: string): Promise<void> {
+    await this.runWithRetry('like', async () => {
+      const me = await this.api.v2.me();
+      const userId = me?.data?.id;
+      if (!userId) {
+        throw new XApiError('like', 'failed to resolve authenticated user id');
+      }
+      await this.api.v2.like(userId, tweetId);
+      return null;
+    });
+  }
+
   private async runWithRetry<T>(kind: string, fn: () => Promise<T>): Promise<T> {
     let attempt = 0;
     let backoff = this.initialBackoffMs;

@@ -74,6 +74,8 @@ export interface XApiSurface {
   getUserTweets(userId: string, opts?: PaginationOptions): Promise<TweetEvent[]>;
   getUserByHandle(handle: string): Promise<XUser>;
   deleteTweet(id: string): Promise<void>;
+  /** Like a tweet on behalf of the authenticated user. */
+  likeTweet(tweetId: string): Promise<void>;
 }
 
 export class XApiError extends Error {

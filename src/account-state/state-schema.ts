@@ -107,6 +107,57 @@ const InboundReplySessionSchema = z
   })
   .passthrough();
 
+/**
+ * Target discovery session — phase tracking for the
+ * like / quote / reply / skip button flow per fresh target tweet.
+ *
+ * Stored as a `Record<event_id, session>` because the collector keys
+ * by tweet id (dedupe). Schema is intentionally lenient (`passthrough`
+ * + plenty of optional fields) — the canonical shape lives in
+ * `posting/collectors/target-button-handler.ts`.
+ */
+const TargetDiscoverySessionSchema = z
+  .object({
+    event_id: z.string(),
+    target_handle: z.string().default(''),
+    target_user_id: z.string().default(''),
+    source_tweet_id: z.string().default(''),
+    action: z.enum(['like', 'quote', 'reply', 'skip']).default('skip'),
+    draft_text: z.string().default(''),
+    rationale: z.string().default(''),
+    status: z.enum(['open', 'posted', 'skipped', 'error']).default('open'),
+    phase: z
+      .enum([
+        'open',
+        'posted_like',
+        'skipped',
+        'quote_suggesting',
+        'quote_pending',
+        'quote_scheduled',
+        'reply_suggesting',
+        'reply_pending',
+        'reply_scheduled',
+        'error',
+      ])
+      .optional(),
+    suggested_text: z.string().optional(),
+    scheduled_text: z.string().optional(),
+    publish_id: z.string().optional(),
+    thread_id: z.string().optional(),
+    message_id: z.string().optional(),
+    created_at: z.string().default(''),
+    updated_at: z.string().optional(),
+  })
+  .passthrough();
+
+const DailyDigestHistoryEntrySchema = z
+  .object({
+    date: z.string(),
+    postedAt: z.string().default(''),
+    messageId: z.string().default(''),
+  })
+  .passthrough();
+
 const RetroSessionSchema = z
   .object({
     id: z.string(),
@@ -180,6 +231,14 @@ export const StateJsonSchema = z
     interaction_queue: z.array(z.unknown()).default([]),
     inbound_reaction_sessions: z.array(InboundReactionSessionSchema).default([]),
     inbound_reply_sessions: z.array(InboundReplySessionSchema).default([]),
+
+    // Target discovery — Discord button flow
+    target_discovery_sessions: z
+      .record(TargetDiscoverySessionSchema)
+      .default({}),
+
+    // Morning digest history (3 months retention)
+    daily_digest_history: z.array(DailyDigestHistoryEntrySchema).default([]),
 
     // Retrospective
     weekly_retro_sessions: z.array(RetroSessionSchema).default([]),

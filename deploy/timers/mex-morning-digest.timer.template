@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for MeX Next morning conversation digest ({ACCOUNT_ID})
+
+[Timer]
+OnCalendar=*-*-* 07:00:00 Asia/Tokyo
+RandomizedDelaySec=60
+Persistent=true
+Unit=mex-morning-digest-{ACCOUNT_ID}.service
+
+[Install]
+WantedBy=timers.target

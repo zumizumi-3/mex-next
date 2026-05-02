@@ -37,6 +37,8 @@ import {
 } from './llm/index.js';
 import { XApiClient } from './x-api/client.js';
 import { buildHandlers, type HandlerContext } from './handlers/index.js';
+import { asPostingRepo } from './handlers/repo-adapter.js';
+import type { LlmProviderLike } from './posting/collectors/types.js';
 
 function buildLlmBridge(config: AppConfig): LlmProvider {
   const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
@@ -130,6 +132,12 @@ async function main(): Promise<void> {
         });
         return;
       }
+      const targetButtonDeps = {
+        repo: asPostingRepo(repo),
+        bridge: adaptBridgeForCollectors(bridge),
+        ...(xApi ? { xApi } : {}),
+        logger: log,
+      };
       await handleDiscordInteraction({
         interaction,
         router: { slashCommands: [], buttons: [], modals: [] },
@@ -139,6 +147,7 @@ async function main(): Promise<void> {
           accountId: config.accountId,
           operatorDiscordUserIds: config.operatorDiscordUserIds,
           logger: log,
+          targetButtons: targetButtonDeps,
         },
       });
     } catch (error) {

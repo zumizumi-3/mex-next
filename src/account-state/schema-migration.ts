@@ -116,6 +116,34 @@ function ensureRuntimeFields(
     next['seen_event_ids'] = [];
     changes.push('seen_event_ids: missing → []');
   }
+  // target discovery uses dict<event_id, session>
+  const tgt = next['target_discovery_sessions'];
+  if (tgt === undefined) {
+    next['target_discovery_sessions'] = {};
+    changes.push('target_discovery_sessions: missing → {}');
+  } else if (Array.isArray(tgt)) {
+    const map: Record<string, unknown> = {};
+    for (const item of tgt) {
+      if (isPlainObject(item)) {
+        const key = String((item as Record<string, unknown>)['event_id'] ?? '').trim();
+        if (key) map[key] = item;
+      }
+    }
+    next['target_discovery_sessions'] = map;
+    changes.push(
+      `target_discovery_sessions: array→dict (${Object.keys(map).length} items)`,
+    );
+  } else if (!isPlainObject(tgt)) {
+    next['target_discovery_sessions'] = {};
+    changes.push('target_discovery_sessions: invalid type → {}');
+  }
+  if (next['daily_digest_history'] === undefined) {
+    next['daily_digest_history'] = [];
+    changes.push('daily_digest_history: missing → []');
+  } else if (!Array.isArray(next['daily_digest_history'])) {
+    next['daily_digest_history'] = [];
+    changes.push('daily_digest_history: invalid type → []');
+  }
   return next;
 }
 

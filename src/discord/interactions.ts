@@ -30,6 +30,11 @@ import {
   buildApprovalMessagePayload,
 } from './approval.js';
 import { parseConfirmCustomId } from './confirmation.js';
+import {
+  dispatchTargetButton,
+  parseTargetCustomId,
+  type TargetButtonDeps,
+} from './target-buttons.js';
 
 /** Single chat-input slash command handler entry. */
 export interface SlashCommandHandler {
@@ -71,6 +76,12 @@ export interface InteractionDeps {
   readonly accountId: string;
   readonly operatorDiscordUserIds: ReadonlyArray<string>;
   readonly logger?: Logger;
+  /**
+   * Optional dependencies for the built-in `target:*` button flow.
+   * When omitted, target button presses fall through to the
+   * registered domain handlers.
+   */
+  readonly targetButtons?: TargetButtonDeps;
 }
 
 export interface HandleInteractionInput {
@@ -149,6 +160,17 @@ async function dispatchButton(
     if (!interaction.deferred && !interaction.replied) {
       await interaction.deferUpdate();
     }
+    return;
+  }
+
+  // Built-in: target discovery (like / quote / reply / skip phases).
+  const targetParsed = parseTargetCustomId(customId);
+  if (targetParsed && deps.targetButtons) {
+    log?.debug(
+      { action: targetParsed.action, sessionId: targetParsed.sessionId },
+      'target_button',
+    );
+    await dispatchTargetButton(interaction, deps.targetButtons);
     return;
   }
 
