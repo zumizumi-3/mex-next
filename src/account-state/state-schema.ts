@@ -173,7 +173,25 @@ export const StateJsonSchema = z
     active_window: ActiveWindowSchema.default({} as never),
 
     // Posting v2
-    posting_sessions: z.array(PostingSessionSchema).default([]),
+    //
+    // `posting_sessions` を array で持つのが新スキーマ。Python 版と
+    // PostingStateMachine (TS) は dict<id, session> 形式で書き戻すので、
+    // forward-compat のため両方受け入れる union とし migration で正規化。
+    // Schema 上は最終的に zod.parse 結果を array に正規化する preprocess を噛ませる。
+    posting_sessions: z
+      .preprocess((value) => {
+        if (Array.isArray(value)) return value;
+        if (value && typeof value === 'object') {
+          return Object.entries(value as Record<string, unknown>).map(([id, session]) => {
+            if (session && typeof session === 'object') {
+              return { id, ...(session as Record<string, unknown>) };
+            }
+            return { id, value: session };
+          });
+        }
+        return [];
+      }, z.array(PostingSessionSchema))
+      .default([]),
     publish_queue: z.array(PublishItemSchema).default([]),
 
     // Interaction
@@ -205,6 +223,13 @@ export const StateJsonSchema = z
     approval_queue: z.array(z.unknown()).default([]),
     alert_queue: z.array(z.unknown()).default([]),
     operation_log: z.array(z.unknown()).default([]),
+
+    // Initial training / seeding / phase questionnaire
+    training_corpus: z.array(z.unknown()).default([]),
+    exemplars: z.array(z.unknown()).default([]),
+    phase_questionnaire_sessions: z.array(z.unknown()).default([]),
+    seed_sessions: z.array(z.unknown()).default([]),
+
     updated_at: z.string().default(''),
   })
   .passthrough();

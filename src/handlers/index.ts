@@ -22,6 +22,13 @@ import { handleAutomationStatus, handleAutomationEnableAll } from './automation.
 import { handleCadenceSkipToday, makeCadenceSetHandler } from './cadence.js';
 export { makeCadenceSetHandler } from './cadence.js';
 import { handleStatusShow, handleHelpShow, handleUnknown } from './status.js';
+import { handleSeedRun } from './seeding.js';
+import { handleTrainingRun } from './training.js';
+import {
+  handlePhaseQuestionnaireStart,
+  handlePhaseQuestionnaireStatus,
+  handlePhaseQuestionnaireSubmit,
+} from './phase.js';
 import type { Handler, HandlersMap } from './types.js';
 
 export type { HandlerContext, HandlerResult, HandlerArgs, Handler, HandlersMap } from './types.js';
@@ -40,6 +47,11 @@ export {
   handleStatusShow,
   handleHelpShow,
   handleUnknown,
+  handleSeedRun,
+  handleTrainingRun,
+  handlePhaseQuestionnaireStart,
+  handlePhaseQuestionnaireStatus,
+  handlePhaseQuestionnaireSubmit,
 };
 
 /**
@@ -65,6 +77,11 @@ export function buildHandlers(): HandlersMap {
     'cadence.skip_today': handleCadenceSkipToday,
     'status.show': handleStatusShow,
     'help.show': handleHelpShow,
+    'seed.run': handleSeedRun,
+    'training.run': handleTrainingRun,
+    'phase.questionnaire_start': handlePhaseQuestionnaireStart,
+    'phase.questionnaire_status': handlePhaseQuestionnaireStatus,
+    'phase.questionnaire_submit': handlePhaseQuestionnaireSubmit,
     unknown: handleUnknown,
   };
   return map;

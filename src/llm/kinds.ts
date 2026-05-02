@@ -22,7 +22,10 @@ export type LlmKind =
   | 'periodic_retrospective_generate'
   | 'periodic_retrospective_apply'
   | 'plan_writeback_diff'
-  | 'plan_writeback_apply';
+  | 'plan_writeback_apply'
+  | 'content_seeding_topics'
+  | 'initial_training_reverse'
+  | 'phase_questionnaire_synthesize';
 
 export const ALL_LLM_KINDS: readonly LlmKind[] = [
   'post_v2_generate',
@@ -38,6 +41,9 @@ export const ALL_LLM_KINDS: readonly LlmKind[] = [
   'periodic_retrospective_apply',
   'plan_writeback_diff',
   'plan_writeback_apply',
+  'content_seeding_topics',
+  'initial_training_reverse',
+  'phase_questionnaire_synthesize',
 ] as const;
 
 /**
@@ -61,6 +67,9 @@ export const KIND_TIMEOUT_MS: Record<LlmKind, number> = {
   periodic_retrospective_apply: 60_000,
   plan_writeback_diff: 45_000,
   plan_writeback_apply: 45_000,
+  content_seeding_topics: 45_000,
+  initial_training_reverse: 30_000,
+  phase_questionnaire_synthesize: 60_000,
 };
 
 /**
@@ -83,6 +92,9 @@ export const KIND_MAX_TOKENS: Record<LlmKind, number> = {
   periodic_retrospective_apply: 1_500,
   plan_writeback_diff: 1_500,
   plan_writeback_apply: 1_500,
+  content_seeding_topics: 1_200,
+  initial_training_reverse: 800,
+  phase_questionnaire_synthesize: 2_000,
 };
 
 export type LlmProviderName = 'anthropic' | 'claude_code';
@@ -109,6 +121,9 @@ export const KIND_PROVIDER: Record<LlmKind, LlmProviderName> = {
   periodic_retrospective_apply: 'claude_code',
   plan_writeback_diff: 'claude_code',
   plan_writeback_apply: 'claude_code',
+  content_seeding_topics: 'claude_code',
+  initial_training_reverse: 'claude_code',
+  phase_questionnaire_synthesize: 'claude_code',
 };
 
 /**
@@ -132,4 +147,7 @@ export const KIND_CACHE_DEFAULT: Record<LlmKind, boolean> = {
   periodic_retrospective_apply: false,
   plan_writeback_diff: false,
   plan_writeback_apply: false,
+  content_seeding_topics: false,
+  initial_training_reverse: true,
+  phase_questionnaire_synthesize: false,
 };

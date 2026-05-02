@@ -46,6 +46,10 @@ export type IntentName =
   | 'cadence.skip_today'
   | 'status.show'
   | 'help.show'
+  | 'seed.run'
+  | 'training.run'
+  | 'phase.questionnaire_start'
+  | 'phase.questionnaire_status'
   | 'unknown';
 
 export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
@@ -65,6 +69,10 @@ export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'cadence.skip_today',
   'status.show',
   'help.show',
+  'seed.run',
+  'training.run',
+  'phase.questionnaire_start',
+  'phase.questionnaire_status',
   'unknown',
 ]);
 
@@ -96,6 +104,7 @@ export const DISPLAY_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'automation.status',
   'status.show',
   'help.show',
+  'phase.questionnaire_status',
 ]);
 
 export interface IntentResult {
@@ -235,6 +244,43 @@ function normalizeArgs(intent: IntentName, args: unknown): Record<string, unknow
   if (intent === 'post.create') {
     const topic = String(dict.topic ?? '').trim();
     if (topic) cleaned.topic = topic.slice(0, 120);
+    return cleaned;
+  }
+
+  if (intent === 'seed.run') {
+    const countRaw = Number(dict.count);
+    if (Number.isFinite(countRaw)) {
+      const n = Math.floor(countRaw);
+      if (n >= 1 && n <= 13) cleaned.count = n;
+    }
+    if (typeof dict.approve_all === 'boolean') {
+      cleaned.approve_all = dict.approve_all;
+    }
+    if (Array.isArray(dict.topics)) {
+      const topics = (dict.topics as unknown[])
+        .map((t) => String(t ?? '').trim())
+        .filter((t) => t.length > 0);
+      if (topics.length > 0) cleaned.topics = topics;
+    }
+    return cleaned;
+  }
+
+  if (intent === 'training.run') {
+    const countRaw = Number(dict.count);
+    if (Number.isFinite(countRaw)) {
+      const n = Math.floor(countRaw);
+      if (n >= 5 && n <= 200) cleaned.count = n;
+    }
+    return cleaned;
+  }
+
+  if (intent === 'phase.questionnaire_start' || intent === 'phase.questionnaire_status') {
+    const cadence = String(dict.cadence ?? '').trim().toLowerCase();
+    if (cadence === 'weekly' || cadence === 'monthly' || cadence === 'quarterly') {
+      cleaned.cadence = cadence;
+    }
+    const sessionId = String(dict.session_id ?? '').trim();
+    if (sessionId) cleaned.session_id = sessionId;
     return cleaned;
   }
 
