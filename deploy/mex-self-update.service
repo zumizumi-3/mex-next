@@ -1,0 +1,12 @@
+[Unit]
+Description=MeX Next self-update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+WorkingDirectory=/opt/mex-next
+ExecStart=/bin/bash -c 'git fetch origin && git reset --hard origin/main && npm ci --production=false && npm run build && systemctl restart mex-bot.service'
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run MeX Next self-update periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+AccuracySec=1min
+Unit=mex-self-update.service
+
+[Install]
+WantedBy=timers.target
