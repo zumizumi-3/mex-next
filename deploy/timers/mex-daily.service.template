@@ -1,0 +1,13 @@
+[Unit]
+Description=MeX Next daily auto post ({ACCOUNT_ID})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+EnvironmentFile=/etc/mex/{ACCOUNT_ID}.env
+WorkingDirectory=/opt/mex-next
+ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/main.js --account-id {ACCOUNT_ID} --task daily
+StandardOutput=journal
+StandardError=journal

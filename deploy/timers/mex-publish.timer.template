@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for MeX Next scheduled publish failsafe ({ACCOUNT_ID})
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=15
+Unit=mex-publish-{ACCOUNT_ID}.service
+
+[Install]
+WantedBy=timers.target
