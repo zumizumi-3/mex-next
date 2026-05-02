@@ -11,6 +11,7 @@
  */
 
 import { z } from 'zod';
+import { parseChannelMap } from './discord/poster.js';
 
 const ConfigSchema = z.object({
   accountId: z.string().min(1, 'ACCOUNT_ID is required'),
@@ -24,15 +25,46 @@ const ConfigSchema = z.object({
   operatorDiscordUserIds: z.array(z.string()).default([]),
   githubToken: z.string().optional(),
   logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+  pendingTurnStorePath: z.string().min(1),
+  sessionStorePath: z.string().min(1),
+  approvalStorePath: z.string().min(1),
+  discordChannelMap: z.record(z.string(), z.string()).default({}),
+  collectorsEnabled: z.boolean().default(false),
+  collectorIntervalMs: z.number().int().positive().default(30 * 60 * 1000),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
+
+const DEFAULT_RUNTIME_DIR = '/var/lib/mex-next';
+
+function pathFor(env: NodeJS.ProcessEnv, key: string, fallback: () => string): string {
+  const value = env[key];
+  if (value && value.length > 0) return value;
+  return fallback();
+}
+
+function parseBool(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const v = value.trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  return fallback;
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const operatorIds = (env.OPERATOR_DISCORD_USER_IDS ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const accountId = env.ACCOUNT_ID ?? '';
+  const runtimeDir = env.MEX_RUNTIME_DIR ?? DEFAULT_RUNTIME_DIR;
+
+  const collectorIntervalRaw = env.COLLECTOR_INTERVAL_MS;
+  const collectorIntervalMs =
+    collectorIntervalRaw && Number.isFinite(Number(collectorIntervalRaw))
+      ? Number(collectorIntervalRaw)
+      : 30 * 60 * 1000;
 
   return ConfigSchema.parse({
     accountId: env.ACCOUNT_ID,
@@ -46,5 +78,17 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     operatorDiscordUserIds: operatorIds,
     githubToken: env.GITHUB_TOKEN,
     logLevel: env.LOG_LEVEL,
+    pendingTurnStorePath: pathFor(env, 'PENDING_TURN_STORE_PATH', () =>
+      `${runtimeDir}/pending-${accountId || 'default'}.json`,
+    ),
+    sessionStorePath: pathFor(env, 'SESSION_STORE_PATH', () =>
+      `${runtimeDir}/sessions-${accountId || 'default'}.json`,
+    ),
+    approvalStorePath: pathFor(env, 'APPROVAL_STORE_PATH', () =>
+      `${runtimeDir}/approvals-${accountId || 'default'}.jsonl`,
+    ),
+    discordChannelMap: parseChannelMap(env),
+    collectorsEnabled: parseBool(env.COLLECTORS_ENABLED, false),
+    collectorIntervalMs,
   });
 }

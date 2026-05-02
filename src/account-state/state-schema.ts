@@ -63,7 +63,9 @@ export const PublishStatusSchema = z.enum([
   'held',
   'published',
   'failed',
+  'failed_terminal',
   'cancelled',
+  'cancelled_by_user',
   'expired',
 ]);
 export type PublishStatus = z.infer<typeof PublishStatusSchema>;
