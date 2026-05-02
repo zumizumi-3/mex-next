@@ -7,8 +7,12 @@
  *  - Domain handlers (posting / scheduling / settings / x-api)
  *  - LLM bridge (anthropic SDK + claude code subprocess)
  *  - Slash command registration
- *  - Periodic collectors (when X API + COLLECTORS_ENABLED)
  *  - systemd-friendly signal handling
+ *
+ * Note: collectors / scheduled publish / periodic retro / preflight are
+ * driven by separate systemd timers (see `deploy/timers/*.template` and
+ * `src/scripts/cron-*.ts`) — main.ts no longer runs them on an
+ * interval. This keeps the long-lived bot process small and bounded.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -33,12 +37,6 @@ import {
 } from './llm/index.js';
 import { XApiClient } from './x-api/client.js';
 import { buildHandlers, type HandlerContext } from './handlers/index.js';
-import { collectInboundReplies } from './posting/collectors/index.js';
-import type { LlmProviderLike } from './posting/collectors/types.js';
-
-interface Disposable {
-  dispose(): Promise<void> | void;
-}
 
 function buildLlmBridge(config: AppConfig): LlmProvider {
   const anthropicClient = new Anthropic({ apiKey: config.anthropicApiKey });
@@ -66,29 +64,6 @@ function buildXApiClient(config: AppConfig): XApiClient | undefined {
     accessToken: config.xApiAccessToken,
     accessTokenSecret: config.xApiAccessTokenSecret,
   });
-}
-
-/**
- * Adapter: collectors expect `LlmProviderLike` (`.request<T>()`),
- * but the bridge exposes `.call()`. We wrap so collectors get a
- * single contract while the bridge stays canonical.
- */
-function adaptBridgeForCollectors(bridge: LlmProvider): LlmProviderLike {
-  return {
-    async request<T>(input: { kind: string; input: Record<string, unknown>; timeoutMs?: number }): Promise<{ data: T; raw?: string }> {
-      const response = await bridge.call({
-        kind: input.kind as never,
-        userPrompt: JSON.stringify(input.input),
-      });
-      let data: T;
-      try {
-        data = JSON.parse(response.text) as T;
-      } catch {
-        data = {} as T;
-      }
-      return { data, raw: response.text };
-    },
-  };
 }
 
 async function main(): Promise<void> {
@@ -181,37 +156,9 @@ async function main(): Promise<void> {
 
   await client.login(config.discordBotToken);
 
-  // Periodic collectors: only when X API is wired AND collectors enabled.
-  const disposers: Disposable[] = [];
-  if (xApi && config.collectorsEnabled) {
-    const collectorBridge = adaptBridgeForCollectors(bridge);
-    const collectorTimer = setInterval(() => {
-      void runInboundReplyCollector({
-        repo,
-        xApi,
-        bridge: collectorBridge,
-        discordPoster: poster,
-        logger: log,
-      });
-    }, config.collectorIntervalMs);
-    disposers.push({
-      dispose: () => {
-        clearInterval(collectorTimer);
-      },
-    });
-    log.info({ intervalMs: config.collectorIntervalMs }, 'collectors_started');
-  }
-
   await new Promise<void>((resolve) => {
     const shutdown = (signal: string): void => {
       log.info({ signal }, 'signal_received_shutting_down');
-      for (const d of disposers) {
-        try {
-          void d.dispose();
-        } catch {
-          // best-effort
-        }
-      }
       try {
         void client.destroy();
       } catch {
@@ -224,31 +171,6 @@ async function main(): Promise<void> {
   });
 
   log.info('mex-next shutdown');
-}
-
-interface RunInboundReplyOptions {
-  repo: AccountRepo;
-  xApi: XApiClient;
-  bridge: LlmProviderLike;
-  discordPoster: DiscordPosterImpl;
-  logger: ReturnType<typeof createLogger>;
-}
-
-async function runInboundReplyCollector(opts: RunInboundReplyOptions): Promise<void> {
-  try {
-    const result = await collectInboundReplies({
-      repo: opts.repo as never,
-      xApi: opts.xApi,
-      bridge: opts.bridge,
-      discordPoster: opts.discordPoster,
-    });
-    opts.logger.info(result, 'collector_inbound_reply_done');
-  } catch (error) {
-    opts.logger.error(
-      { error: error instanceof Error ? error.message : String(error) },
-      'collector_inbound_reply_failed',
-    );
-  }
 }
 
 main().catch((error: unknown) => {

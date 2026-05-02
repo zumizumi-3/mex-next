@@ -29,7 +29,16 @@ const ConfigSchema = z.object({
   sessionStorePath: z.string().min(1),
   approvalStorePath: z.string().min(1),
   discordChannelMap: z.record(z.string(), z.string()).default({}),
+  /**
+   * Legacy: in-process collector loop. Now disabled by default — collectors
+   * are driven by `mex-reactions-poll.timer` (see deploy/timers/). Kept on
+   * the schema so old envs still parse, but main.ts no longer reads it.
+   */
   collectorsEnabled: z.boolean().default(false),
+  /**
+   * Legacy: interval for the in-process loop (now superseded by cron).
+   * Retained for env-file backward compatibility.
+   */
   collectorIntervalMs: z.number().int().positive().default(30 * 60 * 1000),
 });
 

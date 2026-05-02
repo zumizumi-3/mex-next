@@ -1,5 +1,5 @@
 [Unit]
-Description=MeX Next daily auto post ({ACCOUNT_ID})
+Description=MeX Next preflight self-check ({ACCOUNT_ID})
 After=network-online.target
 Wants=network-online.target
 
@@ -8,6 +8,6 @@ Type=oneshot
 Environment=HOME=/root
 EnvironmentFile=/etc/mex/{ACCOUNT_ID}.env
 WorkingDirectory=/opt/mex-next
-ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/scripts/cron-daily-auto-post.js --account-id {ACCOUNT_ID}
+ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/scripts/cron-self-check.js --account-id {ACCOUNT_ID}
 StandardOutput=journal
 StandardError=journal
