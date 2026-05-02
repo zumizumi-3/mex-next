@@ -28,11 +28,18 @@ import type { LlmProvider } from '../llm/bridge.js';
 import { OnboardingCollector } from '../onboarding/collector.js';
 import { applyFreeFormAnswer } from '../handlers/onboarding.js';
 import { STATE_EMOJI } from '../discord/templates.js';
+import {
+  classifyConfirmationReply,
+  createPendingConfirmationStore,
+  type PendingConfirmationStore,
+} from './pending-confirmation-store.js';
 
 export interface IntentDrivenRunnerOptions {
   bridge: LlmProvider;
   handlers: HandlersMap;
   handlerContext: HandlerContext;
+  /** Pending confirmation store. Defaults to an in-memory store. */
+  pendingConfirmations?: PendingConfirmationStore;
 }
 
 /**
@@ -80,10 +87,13 @@ export class IntentDrivenRunner implements ConversationRunner {
   private readonly handlers: HandlersMap;
   private readonly handlerContext: HandlerContext;
 
+  private readonly pendingConfirmations: PendingConfirmationStore;
+
   constructor(opts: IntentDrivenRunnerOptions) {
     this.bridge = opts.bridge;
     this.handlers = opts.handlers;
     this.handlerContext = opts.handlerContext;
+    this.pendingConfirmations = opts.pendingConfirmations ?? createPendingConfirmationStore();
   }
 
   async run(input: {
@@ -112,6 +122,33 @@ export class IntentDrivenRunner implements ConversationRunner {
     const userText = message.content.trim();
     if (!userText) {
       return { output: '何か書いてください。' };
+    }
+
+    // Pending confirmation bypass: if the previous turn ended with
+    // "○○しますか?" then a yes/no answer here should re-run that intent
+    // (or cancel it) instead of going through intent classification.
+    const pending = this.pendingConfirmations.get(input.conversationKey);
+    if (pending) {
+      const verdict = classifyConfirmationReply(userText);
+      if (verdict === 'affirmative') {
+        this.pendingConfirmations.delete(input.conversationKey);
+        const resolved: IntentResult = {
+          intent: pending.intent,
+          args: pending.args,
+          confirmationNeeded: false,
+        };
+        return this.dispatch(resolved, onStatus, turnHandlerContext);
+      }
+      if (verdict === 'negative') {
+        this.pendingConfirmations.delete(input.conversationKey);
+        return {
+          output: `${STATE_EMOJI.cancelled} キャンセルしました。`,
+          metadata: { intent: pending.intent, cancelledByConfirmation: true },
+        };
+      }
+      // ambiguous: fall through to the classifier. Drop the pending
+      // entry so we don't re-trigger on the next turn.
+      this.pendingConfirmations.delete(input.conversationKey);
     }
 
     // Onboarding bypass: when an active onboarding session exists, take
@@ -177,11 +214,18 @@ export class IntentDrivenRunner implements ConversationRunner {
     }
 
     if (intent.confirmationNeeded) {
-      const message =
+      const promptText =
         intent.confirmationMessage ??
         '実行してよろしいですか？「はい」と書いていただければ実行します。';
+      // Park the pending intent so a follow-up "はい" actually runs it.
+      this.pendingConfirmations.set({
+        conversationKey: input.conversationKey,
+        intent: intent.intent,
+        args: intent.args ?? {},
+        promptShown: promptText,
+      });
       return {
-        output: message,
+        output: promptText,
         metadata: { intent: intent.intent, args: intent.args, awaitingConfirmation: true },
       };
     }
