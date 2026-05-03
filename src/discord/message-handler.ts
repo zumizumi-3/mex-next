@@ -37,7 +37,11 @@ import type { PendingTurnStore } from '../conversation/pending-turn-store.js';
 import type { SessionStore } from '../conversation/session-store.js';
 import { TurnCancelledError } from '../conversation/turn-cancellation.js';
 import { buildTurnMessage, hasTurnMessageContent } from '../conversation/turn-message.js';
-import { runConversationTurn, type ConversationRunner } from '../conversation/turn-orchestrator.js';
+import {
+  runConversationTurn,
+  type ConversationRunner,
+  type ConversationTranscriptTurn,
+} from '../conversation/turn-orchestrator.js';
 import { createProgressIndicator, type ProgressChannel } from './progress-indicator.js';
 import { busyReplyTemplate, OVERLOAD_REPLY_TEMPLATE } from './templates.js';
 import type { AutoUnarchiveManager, ThreadLike } from './thread-lifecycle.js';
@@ -130,6 +134,7 @@ export async function handleDiscordMessage(
     attachments: message.attachments,
     author: { id: message.author?.id ?? null, bot: message.author?.bot ?? false },
   });
+  const transcript = await fetchRecentTranscript(replyChannel, deps.client, message.id, log);
 
   try {
     const lockResult = await runWithConversationLock(conversationKey, async () => {
@@ -139,6 +144,7 @@ export async function handleDiscordMessage(
         conversationKey,
         replyChannelId,
         message: turnMessage,
+        transcript,
         runner: deps.runner,
         pendingTurnStore: deps.pendingTurnStore,
         logger: deps.logger,
@@ -166,6 +172,35 @@ export async function handleDiscordMessage(
     }
     log?.error({ conversationKey, error: errMsg(error) }, 'message_handler_failed');
     await progress.failed(formatUserFacingError(error));
+  }
+}
+
+async function fetchRecentTranscript(
+  channel: TextBasedChannel,
+  client: Client,
+  currentMessageId: string,
+  log?: Logger,
+  limit = 10,
+): Promise<ConversationTranscriptTurn[]> {
+  const messages = (channel as unknown as {
+    messages?: {
+      fetch?: (opts: { limit: number }) => Promise<{ values: () => Iterable<Message> }>;
+    };
+  }).messages;
+  if (!messages?.fetch) return [];
+  try {
+    const collection = await messages.fetch({ limit });
+    return Array.from(collection.values())
+      .filter((m) => m.id !== currentMessageId)
+      .filter((m) => typeof m.content === 'string' && m.content.trim().length > 0)
+      .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+      .map((m) => ({
+        role: m.author?.id === client.user?.id || Boolean(m.author?.bot) ? 'assistant' : 'user',
+        content: String(m.content).trim(),
+      }));
+  } catch (error) {
+    log?.warn({ error: errMsg(error) }, 'message_transcript_fetch_failed');
+    return [];
   }
 }
 

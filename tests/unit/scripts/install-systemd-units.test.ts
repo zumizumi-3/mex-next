@@ -19,6 +19,10 @@ describe('install-systemd-units.sh', () => {
     expect(stdout).toContain('/etc/systemd/system/mex-publish-zumi-x.service');
     expect(stdout).toContain('/etc/systemd/system/mex-publish-zumi-x.timer');
     expect(stdout).toContain('/etc/systemd/system/mex-phase-questionnaire-weekly-zumi-x.service');
+    expect(stdout).toContain('/etc/systemd/system/mex-proactive-nudge-weekly-zumi-x.service');
+    expect(stdout).toContain('/etc/systemd/system/mex-proactive-nudge-monthly-zumi-x.timer');
+    expect(stdout).toContain('/etc/systemd/system/mex-proactive-nudge-stale-target-zumi-x.service');
+    expect(stdout).toContain('/etc/systemd/system/mex-proactive-nudge-unanswered-phase-zumi-x.timer');
     expect(stdout).toContain('systemctl enable --now mex-publish-zumi-x.timer');
   });
 });
