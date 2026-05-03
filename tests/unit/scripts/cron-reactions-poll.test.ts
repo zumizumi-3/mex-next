@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from 'pino';
@@ -105,6 +105,39 @@ function makeBridge(): BridgeLlmProvider {
       ),
       usage: { input: 0, output: 0 },
     })),
+  };
+}
+
+function makeTargetBridge(action: 'quote' | 'reply' | 'like' = 'quote'): BridgeLlmProvider {
+  return {
+    call: vi.fn(async (input) => {
+      const kind = String(input.kind);
+      if (kind === 'target_action_suggest') {
+        return {
+          text: JSON.stringify({ action, text: `${action} draft`, rationale: 'target ok' }),
+          usage: { input: 0, output: 0 },
+        };
+      }
+      if (kind === 'post_v2_quality_judge') {
+        return {
+          text: JSON.stringify({
+            scores: {
+              stop_power: 4,
+              specificity: 4,
+              progression: 4,
+              voice_match: 4,
+              length_fit: 4,
+            },
+            comments: {},
+          }),
+          usage: { input: 0, output: 0 },
+        };
+      }
+      return {
+        text: JSON.stringify({ level: 'low_risk', reason: 'ok', draft: 'reply' }),
+        usage: { input: 0, output: 0 },
+      };
+    }),
   };
 }
 
@@ -289,5 +322,103 @@ describe('runReactionsPoll', () => {
     expect(outcome.inboundQuote.ok).toBe(false);
     // inbound_reply / target_activity は別経路なので OK のはず
     expect(outcome.inboundReply.ok).toBe(true);
+  });
+
+  it('automation_level=full_auto で 5-axis judge pass なら target draft を即投稿する', async () => {
+    await seedRepo({
+      x_action_system: {
+        automation_level: 'full_auto',
+        tracked_targets: { usernames: ['target_a'] },
+      },
+    });
+    const xApi = makeXApi({
+      targetTweets: [
+        { id: '900', text: 'target tweet', authorId: 'u-target-target_a', createdAt: '' },
+      ],
+    });
+    const poster = makePoster();
+
+    const outcome = await runReactionsPoll({
+      config: makeConfig(),
+      repo,
+      xApi,
+      bridge: makeTargetBridge('quote'),
+      poster,
+      logger: makeLogger(),
+    });
+
+    expect(outcome.targetAutomation.level).toBe('full_auto');
+    expect(outcome.targetAutomation.autoPosted).toBe(1);
+    expect(xApi.post).toHaveBeenCalledWith('quote draft', { quoteTweetId: '900' });
+    expect(poster.postThread).not.toHaveBeenCalled();
+  });
+
+  it('automation_level=semi_auto では target draft をボタン付き通知する', async () => {
+    await seedRepo({
+      x_action_system: {
+        automation_level: 'semi_auto',
+        tracked_targets: { usernames: ['target_a'] },
+      },
+    });
+    const xApi = makeXApi({
+      targetTweets: [
+        { id: '901', text: 'target tweet', authorId: 'u-target-target_a', createdAt: '' },
+      ],
+    });
+    const poster = makePoster();
+
+    const outcome = await runReactionsPoll({
+      config: makeConfig(),
+      repo,
+      xApi,
+      bridge: makeTargetBridge('reply'),
+      poster,
+      logger: makeLogger(),
+    });
+
+    expect(outcome.targetAutomation.level).toBe('semi_auto');
+    expect(outcome.targetAutomation.notified).toBe(1);
+    expect(xApi.post).not.toHaveBeenCalled();
+    expect(poster.postThread).toHaveBeenCalledTimes(1);
+    const callArg = (poster.postThread as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(callArg.content).toContain('reply draft');
+    expect(JSON.stringify(callArg.components)).toContain('target:reply-schedule:901');
+  });
+
+  it('automation_level=manual では target session を積むだけで通知も投稿もしない', async () => {
+    await seedRepo({
+      x_action_system: {
+        automation_level: 'manual',
+        tracked_targets: { usernames: ['target_a'] },
+      },
+    });
+    const xApi = makeXApi({
+      targetTweets: [
+        { id: '902', text: 'target tweet', authorId: 'u-target-target_a', createdAt: '' },
+      ],
+    });
+    const bridge = makeTargetBridge('quote');
+    const poster = makePoster();
+
+    const outcome = await runReactionsPoll({
+      config: makeConfig(),
+      repo,
+      xApi,
+      bridge,
+      poster,
+      logger: makeLogger(),
+    });
+
+    expect(outcome.targetAutomation.level).toBe('manual');
+    expect(outcome.targetAutomation.inspected).toBe(1);
+    expect(xApi.post).not.toHaveBeenCalled();
+    expect(poster.postThread).not.toHaveBeenCalled();
+    expect(bridge.call).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'target_action_suggest' }),
+    );
+    const state = JSON.parse(await readFile(join(workDir, 'state.json'), 'utf-8')) as {
+      target_discovery_sessions?: Record<string, { status?: string }>;
+    };
+    expect(state.target_discovery_sessions?.['902']?.status).toBe('open');
   });
 });

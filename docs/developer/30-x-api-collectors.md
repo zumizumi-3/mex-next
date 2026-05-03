@@ -10,7 +10,7 @@ inbound reply / quote / target discovery を担当する poll module 群。
 
 ```mermaid
 flowchart TB
-    T[mex-reactions-poll timer<br/>30min] --> A[inbound reply collector]
+    T[mex-reactions-poll timer<br/>15min] --> A[inbound reply collector]
     T --> B[inbound quote collector]
     T --> C[target discovery collector]
     A --> X[X API GET /users/:id/mentions]

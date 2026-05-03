@@ -61,3 +61,34 @@ export async function handleAutomationEnableAll(
     tag: 'automation.enable_all',
   };
 }
+
+type AutomationLevel = 'manual' | 'semi_auto' | 'full_auto';
+
+function isAutomationLevel(value: unknown): value is AutomationLevel {
+  return value === 'manual' || value === 'semi_auto' || value === 'full_auto';
+}
+
+export async function handleAutomationSetLevel(
+  ctx: HandlerContext,
+  args: HandlerArgs,
+): Promise<HandlerResult> {
+  const level = String(args.level ?? '').trim();
+  if (!isAutomationLevel(level)) {
+    return {
+      content: '⚠️ level は manual / semi_auto / full_auto のいずれか。',
+      tag: 'automation.set_level.invalid',
+    };
+  }
+
+  const account = await ctx.repo.loadAccount();
+  const xActionSystem = {
+    ...((account.x_action_system ?? {}) as Record<string, unknown>),
+    automation_level: level,
+  };
+  await ctx.repo.saveAccount({ ...account, x_action_system: xActionSystem } as typeof account);
+
+  return {
+    content: `${STATE_EMOJI.ok} automation_level を ${level} に変更しました。`,
+    tag: 'automation.set_level',
+  };
+}

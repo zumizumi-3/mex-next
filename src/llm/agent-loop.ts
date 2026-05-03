@@ -27,6 +27,7 @@ export interface AgentStateSnapshot {
   };
   automation: {
     enabled: boolean;
+    level: 'manual' | 'semi_auto' | 'full_auto';
     cadence: 'light' | 'standard' | 'aggressive';
     skip_dates: string[];
   };

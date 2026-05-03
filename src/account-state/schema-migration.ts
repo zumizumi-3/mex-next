@@ -379,6 +379,18 @@ export function migrateAccount(input: unknown): MigrationResult<AccountJson> {
     }
   }
 
+  const xActionSystem = working['x_action_system'];
+  if (isPlainObject(xActionSystem) && xActionSystem['automation_level'] === undefined) {
+    working = {
+      ...working,
+      x_action_system: {
+        ...xActionSystem,
+        automation_level: 'semi_auto',
+      },
+    };
+    changes.push('x_action_system.automation_level: missing → semi_auto');
+  }
+
   const preKeys = new Set(Object.keys(working));
   const value = AccountJsonSchema.parse(working);
   for (const key of Object.keys(value)) {

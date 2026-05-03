@@ -103,6 +103,7 @@ const XActionSystemSchema = z
   .object({
     ingestion_mode: z.string().default('manual'),
     default_mode: z.string().default('semi_auto'),
+    automation_level: z.enum(['manual', 'semi_auto', 'full_auto']).default('semi_auto'),
     polling: z
       .object({
         enabled: z.boolean().default(false),

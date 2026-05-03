@@ -162,6 +162,15 @@ describe('migrateAccount', () => {
     expect(value.engagement_policy.retweet_notification).toBe('summary');
   });
 
+  it('x_action_system.automation_level 欠落時は semi_auto を埋める', () => {
+    const { value, changes } = migrateAccount({
+      account_id: 'x',
+      x_action_system: { tracked_targets: { usernames: ['alice'] } },
+    });
+    expect(value.x_action_system.automation_level).toBe('semi_auto');
+    expect(changes).toContain('x_action_system.automation_level: missing → semi_auto');
+  });
+
   it('non-object 入力は空 account として復旧', () => {
     const { value, changes } = migrateAccount(null);
     expect(value.operating_cadence.profile).toBe('light');

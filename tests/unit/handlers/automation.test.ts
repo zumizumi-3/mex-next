@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { handleAutomationStatus, handleAutomationEnableAll } from '../../../src/handlers/index.js';
+import {
+  handleAutomationStatus,
+  handleAutomationEnableAll,
+  handleAutomationSetLevel,
+} from '../../../src/handlers/index.js';
 import { setupHandlerTest, type TestHandlerScaffold } from './test-helpers.js';
 
 let scaf: TestHandlerScaffold;
@@ -103,5 +107,44 @@ describe('handleAutomationEnableAll', () => {
     };
     const result = await handleAutomationEnableAll(ctx, {});
     expect(result.tag).toBe('automation.enable_all.unauthorized');
+  });
+});
+
+describe('handleAutomationSetLevel', () => {
+  it.each(['manual', 'semi_auto', 'full_auto'] as const)(
+    'automation_level を %s に切替できる',
+    async (level) => {
+      scaf = await setupHandlerTest({
+        account: {
+          account_id: 'zumi-x',
+          x_action_system: { automation_level: 'semi_auto' },
+        },
+      });
+
+      const result = await handleAutomationSetLevel(scaf.ctx, { level });
+
+      expect(result.tag).toBe('automation.set_level');
+      const persisted = JSON.parse(await readFile(join(scaf.workDir, 'account.json'), 'utf-8')) as {
+        x_action_system?: { automation_level?: string };
+      };
+      expect(persisted.x_action_system?.automation_level).toBe(level);
+    },
+  );
+
+  it('不正 level は保存しない', async () => {
+    scaf = await setupHandlerTest({
+      account: {
+        account_id: 'zumi-x',
+        x_action_system: { automation_level: 'semi_auto' },
+      },
+    });
+
+    const result = await handleAutomationSetLevel(scaf.ctx, { level: 'auto' });
+
+    expect(result.tag).toBe('automation.set_level.invalid');
+    const persisted = JSON.parse(await readFile(join(scaf.workDir, 'account.json'), 'utf-8')) as {
+      x_action_system?: { automation_level?: string };
+    };
+    expect(persisted.x_action_system?.automation_level).toBe('semi_auto');
   });
 });

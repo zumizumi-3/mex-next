@@ -38,6 +38,7 @@ export async function buildStateSnapshot(ctx: HandlerContext): Promise<AgentStat
     },
     automation: {
       enabled: automationEnabled(account),
+      level: automationLevel(account),
       cadence: cadenceProfile(account),
       skip_dates: Array.isArray(state.skip_dates)
         ? state.skip_dates.filter((date): date is string => typeof date === 'string')
@@ -102,6 +103,15 @@ function activeOnboarding(state: Awaited<ReturnType<HandlerContext['repo']['load
 function automationEnabled(account: Awaited<ReturnType<HandlerContext['repo']['loadAccount']>>): boolean {
   const policy = objectField(account.approval_policy);
   return AUTOMATION_GATES.every((gate) => policy[gate] === false);
+}
+
+function automationLevel(
+  account: Awaited<ReturnType<HandlerContext['repo']['loadAccount']>>,
+): 'manual' | 'semi_auto' | 'full_auto' {
+  const x = objectField(account.x_action_system);
+  const value = stringField(x.automation_level);
+  if (value === 'manual' || value === 'full_auto') return value;
+  return 'semi_auto';
 }
 
 function cadenceProfile(

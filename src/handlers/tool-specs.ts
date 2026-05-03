@@ -1,6 +1,7 @@
 import type { Handler, HandlerArgs, HandlerContext } from './types.js';
 import {
   handleAutomationEnableAll,
+  handleAutomationSetLevel,
   handleCadenceSkipToday,
   handleOnboardCancel,
   handleOnboardStart,
@@ -70,6 +71,7 @@ export const TOOL_NAMES = [
   'add_target_handle',
   'remove_target_handle',
   'enable_all_automation',
+  'set_automation_level',
   'skip_today',
   'set_cadence',
   'create_post_draft',
@@ -223,6 +225,21 @@ export const TOOL_SPECS: ToolSpec[] = [
     destructive: true,
     buildHandlerArgs: emptyArgs,
     handler: handleAutomationEnableAll,
+  },
+  {
+    name: 'set_automation_level',
+    description:
+      '自動化レベルを変更する。manual=毎回手動, semi_auto=ドラフト承認制 (デフォルト), full_auto=完全自動。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        level: { type: 'string', enum: ['manual', 'semi_auto', 'full_auto'] },
+      },
+      required: ['level'],
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: handleAutomationSetLevel,
   },
   {
     name: 'skip_today',

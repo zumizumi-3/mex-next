@@ -431,7 +431,7 @@ function snapshot(
         },
       ],
     },
-    automation: { enabled: false, cadence: 'standard', skip_dates: [] },
+    automation: { enabled: false, level: 'semi_auto', cadence: 'standard', skip_dates: [] },
     targets: [],
     onboarding: { active: false, current_question_id: null },
     account: { account_id: 'zumi-x', display_name: 'tester' },

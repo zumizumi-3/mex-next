@@ -19,7 +19,10 @@ describe('buildStateSnapshot', () => {
           like_requires_approval: false,
           tracked_reply_requires_approval: false,
         },
-        x_action_system: { tracked_targets: { usernames: ['alice', '@bob'] } },
+        x_action_system: {
+          automation_level: 'full_auto',
+          tracked_targets: { usernames: ['alice', '@bob'] },
+        },
       },
       state: {
         account_id: 'zumi-x',
@@ -53,6 +56,7 @@ describe('buildStateSnapshot', () => {
       );
       expect(snapshot.automation).toEqual({
         enabled: true,
+        level: 'full_auto',
         cadence: 'aggressive',
         skip_dates: ['2026-05-03'],
       });

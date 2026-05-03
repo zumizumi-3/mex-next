@@ -30,6 +30,12 @@ export interface CollectTargetActivityOptions {
   targetHandles: readonly string[];
   /** Default 20. */
   maxFetchPerTarget?: number;
+  /** Default 3. Fresh target tweets are scored and only the top N become sessions. */
+  maxSessionsPerRun?: number;
+  /** Default true. Cron disables this and lets automation_level drive dispatch. */
+  autoNotify?: boolean;
+  /** Default true. Manual automation can store raw sessions without invoking the LLM. */
+  suggestActions?: boolean;
   now?: () => string;
 }
 
@@ -60,6 +66,8 @@ interface TargetSession {
   draft_text: string;
   rationale: string;
   status: 'open' | 'posted' | 'skipped' | 'error';
+  phase?: 'open' | 'skipped' | 'error';
+  score?: number;
   created_at: string;
   thread_id?: string;
   message_id?: string;
@@ -74,6 +82,9 @@ export async function collectTargetActivity(
   const { repo, xApi, bridge, discordPoster, targetHandles } = opts;
   const now = opts.now ?? defaultNow;
   const maxFetch = opts.maxFetchPerTarget ?? DEFAULT_MAX;
+  const maxSessions = opts.maxSessionsPerRun ?? 3;
+  const autoNotify = opts.autoNotify ?? true;
+  const suggestActions = opts.suggestActions ?? true;
 
   if (targetHandles.length === 0) {
     return { collected: 0, posted: 0, skipped: 0, errors: 0, perTarget: [] };
@@ -87,6 +98,7 @@ export async function collectTargetActivity(
   let totalPosted = 0;
   let totalSkipped = 0;
   let totalErrors = 0;
+  let remainingSessions = Math.max(0, maxSessions);
   const summaries: TargetSummary[] = [];
 
   for (const handleRaw of targetHandles) {
@@ -142,13 +154,20 @@ export async function collectTargetActivity(
     }
 
     let highestId = cursor.lastSinceId ?? '';
-    const ordered = [...tweets].sort((a, b) => compareIds(a.id, b.id));
+    const candidates = [...tweets]
+      .filter((tweet) => !sessions[tweet.id])
+      .map((tweet) => ({ tweet, score: scoreTargetTweet(tweet) }))
+      .sort((a, b) => {
+        const byScore = b.score - a.score;
+        return byScore !== 0 ? byScore : compareIds(b.tweet.id, a.tweet.id);
+      })
+      .slice(0, remainingSessions)
+      .sort((a, b) => compareIds(a.tweet.id, b.tweet.id));
+    remainingSessions = Math.max(0, remainingSessions - candidates.length);
 
-    for (const tweet of ordered) {
+    for (const { tweet, score } of candidates) {
       summary.collected += 1;
       totalCollected += 1;
-
-      if (sessions[tweet.id]) continue;
 
       const session: TargetSession = {
         event_id: tweet.id,
@@ -159,14 +178,25 @@ export async function collectTargetActivity(
         draft_text: '',
         rationale: '',
         status: 'open',
+        phase: 'open',
+        score,
         created_at: now(),
       };
+
+      if (!suggestActions) {
+        sessions[tweet.id] = session;
+        if (compareIds(tweet.id, highestId) > 0) {
+          highestId = tweet.id;
+        }
+        continue;
+      }
 
       let suggestion: TargetActionSuggestion;
       try {
         suggestion = await suggestAction(bridge, { tweet, target: user });
       } catch (error: unknown) {
         session.status = 'error';
+        session.phase = 'error';
         session.rationale = `suggest failed: ${describeError(error)}`;
         summary.errors += 1;
         totalErrors += 1;
@@ -180,8 +210,17 @@ export async function collectTargetActivity(
 
       if (suggestion.action === 'skip') {
         session.status = 'skipped';
+        session.phase = 'skipped';
         summary.skipped += 1;
         totalSkipped += 1;
+        sessions[tweet.id] = session;
+        if (compareIds(tweet.id, highestId) > 0) {
+          highestId = tweet.id;
+        }
+        continue;
+      }
+
+      if (!autoNotify) {
         sessions[tweet.id] = session;
         if (compareIds(tweet.id, highestId) > 0) {
           highestId = tweet.id;
@@ -210,6 +249,7 @@ export async function collectTargetActivity(
         totalPosted += 1;
       } catch (error: unknown) {
         session.status = 'error';
+        session.phase = 'error';
         session.rationale = `${session.rationale} | post failed: ${describeError(error)}`;
         summary.errors += 1;
         totalErrors += 1;
@@ -244,6 +284,26 @@ export async function collectTargetActivity(
 }
 
 // ---------------------------------------------------------------------------
+
+function scoreTargetTweet(tweet: TweetEvent): number {
+  const rec = tweet as unknown as Record<string, unknown>;
+  const publicMetrics = rec['publicMetrics'] ?? rec['public_metrics'];
+  const metrics =
+    publicMetrics && typeof publicMetrics === 'object'
+      ? (publicMetrics as Record<string, unknown>)
+      : rec;
+  const likes = numberMetric(metrics, 'like_count') + numberMetric(metrics, 'likes');
+  const replies = numberMetric(metrics, 'reply_count') + numberMetric(metrics, 'replies');
+  const retweets = numberMetric(metrics, 'retweet_count') + numberMetric(metrics, 'retweets');
+  const quotes = numberMetric(metrics, 'quote_count') + numberMetric(metrics, 'quotes');
+  const relevance = Math.min(tweet.text.trim().length, 280) / 280;
+  return likes + replies * 2 + retweets * 2 + quotes * 3 + relevance;
+}
+
+function numberMetric(value: Record<string, unknown>, key: string): number {
+  const raw = value[key];
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+}
 
 async function suggestAction(
   bridge: LlmProviderLike,

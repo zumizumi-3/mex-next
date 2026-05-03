@@ -55,6 +55,7 @@ describe('AccountJsonSchema', () => {
     expect(parsed.operating_cadence.profile).toBe('light');
     expect(parsed.approval_policy.publish_requires_approval).toBe(false);
     expect(parsed.x_action_system.tracked_targets.usernames).toEqual([]);
+    expect(parsed.x_action_system.automation_level).toBe('semi_auto');
   });
 });
 

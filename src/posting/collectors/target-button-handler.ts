@@ -58,6 +58,10 @@ export interface TargetDiscoverySession {
   scheduled_text?: string;
   /** publish_id from `publish_queue` once enqueued. */
   publish_id?: string;
+  /** tweet id when full-auto posts directly instead of enqueueing. */
+  posted_tweet_id?: string;
+  /** collector-side ranking score for prioritizing fresh target tweets. */
+  score?: number;
   thread_id?: string;
   message_id?: string;
   created_at: string;

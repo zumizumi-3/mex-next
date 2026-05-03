@@ -19,7 +19,11 @@ import {
 } from './schedule.js';
 import { handlePostCreate } from './post.js';
 import { handleTargetAdd, handleTargetList, handleTargetRemove } from './target.js';
-import { handleAutomationStatus, handleAutomationEnableAll } from './automation.js';
+import {
+  handleAutomationStatus,
+  handleAutomationEnableAll,
+  handleAutomationSetLevel,
+} from './automation.js';
 import { handleCadenceSkipToday, makeCadenceSetHandler } from './cadence.js';
 export { makeCadenceSetHandler } from './cadence.js';
 import { handleStatusShow, handleHelpShow, handleUnknown } from './status.js';
@@ -51,6 +55,7 @@ export {
   handleTargetRemove,
   handleAutomationStatus,
   handleAutomationEnableAll,
+  handleAutomationSetLevel,
   handleCadenceSkipToday,
   handleStatusShow,
   handleHelpShow,
@@ -84,6 +89,7 @@ export function buildHandlers(): HandlersMap {
     'target.remove': handleTargetRemove,
     'automation.status': handleAutomationStatus,
     'automation.enable_all': handleAutomationEnableAll,
+    'automation.set_level': handleAutomationSetLevel,
     'cadence.set_light': makeCadenceSetHandler('light'),
     'cadence.set_standard': makeCadenceSetHandler('standard'),
     'cadence.set_aggressive': makeCadenceSetHandler('aggressive'),
