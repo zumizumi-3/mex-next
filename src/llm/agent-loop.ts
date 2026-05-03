@@ -91,14 +91,28 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     throw new Error('agent loop aborted after LLM call');
   }
 
+  const blockText = extractJsonBlock(response.text);
+  if (!blockText) {
+    opts.logger.warn(
+      { preview: response.text.slice(0, 200) },
+      'agent_loop_no_json_block',
+    );
+    return {
+      reply: '',
+      trace: [],
+      fallbackToLegacy: true,
+      fallbackReason: 'invalid_json',
+    };
+  }
+
   let parsed: AgentStructuredResponse;
   try {
-    parsed = JSON.parse(response.text) as AgentStructuredResponse;
+    parsed = JSON.parse(blockText) as AgentStructuredResponse;
   } catch (err) {
     opts.logger.warn(
       {
         error: err instanceof Error ? err.message : String(err),
-        preview: response.text.slice(0, 200),
+        preview: blockText.slice(0, 200),
       },
       'agent_loop_json_parse_failed',
     );
@@ -175,6 +189,25 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     reply: result.ok ? reply : `${reply}\n${result.error}`.trim(),
     trace,
   };
+}
+
+function extractJsonBlock(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
+
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) {
+    const inner = fence[1].trim();
+    if (inner.startsWith('{') && inner.endsWith('}')) return inner;
+  }
+
+  const first = trimmed.indexOf('{');
+  const last = trimmed.lastIndexOf('}');
+  if (first !== -1 && last > first) {
+    return trimmed.slice(first, last + 1);
+  }
+  return null;
 }
 
 function buildAgentUserPrompt(opts: AgentLoopOptions): string {

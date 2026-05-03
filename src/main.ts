@@ -56,7 +56,7 @@ async function buildLlmBridge(
   log: ReturnType<typeof createLogger>,
   discordPoster: DiscordPosterImpl,
 ): Promise<LlmProvider> {
-  const claudeCode = createClaudeCodeProvider({ cwd: config.accountRepo });
+  const claudeCode = createClaudeCodeProvider({ cwd: config.accountRepo, logger: log });
   // Anthropic SDK is opt-in: when ANTHROPIC_API_KEY is missing, every kind
   // falls back to claude_code (slightly slower but no separate billing).
   let anthropic: LlmProvider | undefined;

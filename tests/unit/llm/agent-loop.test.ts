@@ -1,4 +1,4 @@
-import pino from 'pino';
+import pino, { type Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -37,9 +37,13 @@ describe('runAgentLoop', () => {
     }
   });
 
-  it('JSON.parse 失敗時は legacy fallback に戻す', async () => {
+  it('JSON ブロックの前後に余計な text があっても parse できる', async () => {
     const scaf = await setupHandlerTest();
-    const bridge = textBridge('this is not json');
+    const bridge = textBridge([
+      'Here is the result:',
+      '{"reply":"予約はありません。","tool_call":null,"needs_confirmation":false}',
+      'Done.',
+    ].join('\n'));
 
     try {
       const result = await runAgentLoop({
@@ -52,12 +56,69 @@ describe('runAgentLoop', () => {
         logger: pino({ level: 'silent' }),
       });
 
+      expect(result).toEqual({ reply: '予約はありません。', trace: [] });
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
+  it('JSON ブロックが無い text は legacy fallback に戻す', async () => {
+    const scaf = await setupHandlerTest();
+    const bridge = textBridge('this is not json');
+    const warn = vi.fn();
+
+    try {
+      const result = await runAgentLoop({
+        bridge,
+        systemPrompt: 'system',
+        toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
+        handlerContext: scaf.ctx,
+        userMessage: '予約見せて',
+        logger: { warn } as unknown as Logger,
+      });
+
       expect(result).toMatchObject({
         fallbackToLegacy: true,
         fallbackReason: 'invalid_json',
         reply: '',
         trace: [],
       });
+      expect(warn).toHaveBeenCalledWith(
+        { preview: 'this is not json' },
+        'agent_loop_no_json_block',
+      );
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
+  it('JSON ブロック抽出後の parse 失敗時は legacy fallback に戻す', async () => {
+    const scaf = await setupHandlerTest();
+    const bridge = textBridge('{ bad json }');
+    const warn = vi.fn();
+
+    try {
+      const result = await runAgentLoop({
+        bridge,
+        systemPrompt: 'system',
+        toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
+        handlerContext: scaf.ctx,
+        userMessage: '予約見せて',
+        logger: { warn } as unknown as Logger,
+      });
+
+      expect(result).toMatchObject({
+        fallbackToLegacy: true,
+        fallbackReason: 'invalid_json',
+        reply: '',
+        trace: [],
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ preview: '{ bad json }' }),
+        'agent_loop_json_parse_failed',
+      );
     } finally {
       await scaf.cleanup();
     }

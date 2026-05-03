@@ -21,6 +21,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { randomBytes } from 'node:crypto';
 
 import {
   LlmProviderError,
@@ -47,6 +48,8 @@ export interface ClaudeCodeProviderConfig {
   cwd?: string;
   /** Optional inherited environment tweaks. */
   env?: NodeJS.ProcessEnv;
+  /** Optional logger for stderr diagnostics from the CLI. */
+  logger?: { warn: (data: object, msg: string) => void };
 }
 
 /**
@@ -76,7 +79,7 @@ export function createClaudeCodeProvider(
 
   return {
     async call(opts: LlmCallOptions): Promise<LlmResponse> {
-      const systemPrompt = opts.systemPrompt;
+      let systemPrompt = opts.systemPrompt;
       const userPrompt = opts.userPrompt;
       const timeoutMs = opts.timeoutMs;
 
@@ -90,15 +93,25 @@ export function createClaudeCodeProvider(
         throw new LlmProviderError('ClaudeCodeProvider requires timeoutMs');
       }
 
+      if (opts.jsonSchema) {
+        const fence = `<<MEX_SCHEMA_GUIDE_${randomBytes(8).toString('hex')}>>`;
+        systemPrompt += [
+          '',
+          fence,
+          'You MUST return ONLY a single JSON object that strictly matches the schema below.',
+          'Do not include prose, markdown code fences, or commentary outside the JSON.',
+          'Schema:',
+          JSON.stringify(opts.jsonSchema, null, 2),
+          fence,
+        ].join('\n');
+      }
+
       const args: string[] = [
         '-p',
         '--append-system-prompt',
         systemPrompt,
         ...extraArgs,
       ];
-      if (opts.jsonSchema) {
-        args.push('--json-schema', JSON.stringify(opts.jsonSchema));
-      }
 
       let result: { stdout: string; stderr: string; exitCode?: number };
       try {
@@ -127,6 +140,13 @@ export function createClaudeCodeProvider(
       if (result.exitCode != null && result.exitCode !== 0) {
         throw new LlmProviderError(
           `claude_code ${opts.kind} exited ${result.exitCode}: ${result.stderr.trim()}`,
+        );
+      }
+
+      if (result.stderr && result.stderr.trim()) {
+        config.logger?.warn(
+          { kind: opts.kind, stderr: result.stderr.trim().slice(0, 500), exitCode: result.exitCode },
+          'claude_code_stderr',
         );
       }
 
