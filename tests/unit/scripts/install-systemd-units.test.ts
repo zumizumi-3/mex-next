@@ -27,4 +27,49 @@ describe('install-systemd-units.sh', () => {
     );
     expect(stdout).toContain('systemctl enable --now mex-publish-zumi-x.timer');
   });
+
+  it('--dry-run flag renders unit names and contents without env dry-run', async () => {
+    const { stdout } = await execFileAsync(
+      'bash',
+      ['scripts/install-systemd-units.sh', 'zumi-x', '--dry-run'],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          ACCOUNT_ID: '',
+          MEX_SYSTEMD_DRY_RUN: '',
+        },
+        maxBuffer: 1024 * 1024,
+      },
+    );
+
+    expect(stdout).toContain('===== /etc/systemd/system/mex-publish-zumi-x.service =====');
+    expect(stdout).toContain('===== /etc/systemd/system/mex-publish-zumi-x.timer =====');
+    expect(stdout).toContain('[Unit]');
+    expect(stdout).toContain('systemctl enable --now mex-publish-zumi-x.timer');
+  });
+
+  it('invalid ACCOUNT_ID exits non-zero before rendering', async () => {
+    try {
+      await execFileAsync(
+        'bash',
+        ['scripts/install-systemd-units.sh', 'bad id', '--dry-run'],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            ACCOUNT_ID: '',
+            MEX_SYSTEMD_DRY_RUN: '',
+          },
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      throw new Error('expected install-systemd-units.sh to fail');
+    } catch (error: unknown) {
+      const err = error as { code?: number; stderr?: string; stdout?: string };
+      expect(err.code).not.toBe(0);
+      expect(err.stderr).toContain('invalid ACCOUNT_ID');
+      expect(err.stdout ?? '').not.toContain('mex-publish-bad id.service');
+    }
+  });
 });

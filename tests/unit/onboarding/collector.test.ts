@@ -8,6 +8,7 @@ import {
   OnboardingCollector,
   ONBOARDING_QUESTION_COUNT,
   ONBOARDING_SESSION_TTL_MS,
+  pruneStaleOnboardingSessions,
   validateAnswer,
 } from '../../../src/onboarding/collector.js';
 import { ONBOARDING_QUESTIONS } from '../../../src/onboarding/questions.js';
@@ -240,6 +241,58 @@ describe('OnboardingCollector — round-trip', () => {
     expect(updated.state).toBe('expired');
     const active = await collector.getActive();
     expect(active).toBeNull();
+  });
+
+  it('24h 超の onboarding session を state から prune する', async () => {
+    scaf = await makeScaffold();
+    const nowMs = Date.parse('2026-05-03T00:00:00.000Z');
+    await writeFile(
+      join(scaf.workDir, 'state.json'),
+      JSON.stringify(
+        {
+          account_id: 'zumi-x',
+          current_phase: 'needs_diagnosis',
+          onboarding_sessions: [
+            {
+              id: 'onb_old_expired',
+              state: 'expired',
+              current_question_id: 'display_name',
+              answers: {},
+              created_at: '2026-05-01T23:59:59.000Z',
+              updated_at: '2026-05-02T00:30:00.000Z',
+              expires_at: '2026-05-02T23:59:59.000Z',
+              thread_id: null,
+              channel_id: null,
+            },
+            {
+              id: 'onb_fresh',
+              state: 'asking',
+              current_question_id: 'display_name',
+              answers: {},
+              created_at: '2026-05-02T00:00:01.000Z',
+              updated_at: '2026-05-02T00:00:01.000Z',
+              expires_at: '2026-05-03T00:00:01.000Z',
+              thread_id: null,
+              channel_id: null,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    const result = await pruneStaleOnboardingSessions(scaf.repo, {
+      keepWithinMs: ONBOARDING_SESSION_TTL_MS,
+      nowMs,
+    });
+
+    expect(result.pruned).toBe(1);
+    const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
+      onboarding_sessions: Array<{ id: string }>;
+    };
+    expect(persisted.onboarding_sessions.map((s) => s.id)).toEqual(['onb_fresh']);
   });
 
   it('cancel marks active session cancelled (idempotent on terminal)', async () => {

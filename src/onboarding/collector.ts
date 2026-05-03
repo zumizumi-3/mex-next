@@ -94,6 +94,45 @@ export interface StartOptions {
   readonly channelId?: string | null;
 }
 
+export interface PruneStaleOnboardingSessionsOptions {
+  /** Sessions created within this window are retained. Default: 24h. */
+  readonly keepWithinMs?: number;
+  /** Optional clock override for tests / collectors. Default: Date.now(). */
+  readonly nowMs?: number;
+}
+
+export async function pruneStaleOnboardingSessions(
+  repo: AccountRepo,
+  opts: PruneStaleOnboardingSessionsOptions = {},
+): Promise<{ pruned: number }> {
+  const keepWithinMs = opts.keepWithinMs ?? ONBOARDING_SESSION_TTL_MS;
+  const nowMs = opts.nowMs ?? Date.now();
+  let pruned = 0;
+
+  await repo.withState(async (state) => {
+    const current = state.onboarding_sessions ?? [];
+    const kept = current.filter((session) => {
+      const createdMs = Date.parse(session.created_at);
+      if (Number.isNaN(createdMs)) return true;
+      const keep = nowMs - createdMs <= keepWithinMs;
+      if (!keep) pruned += 1;
+      return keep;
+    });
+    if (kept.length === current.length) {
+      return { state, result: undefined };
+    }
+    return {
+      state: {
+        ...state,
+        onboarding_sessions: kept,
+      },
+      result: undefined,
+    };
+  });
+
+  return { pruned };
+}
+
 /**
  * Customer onboarding wizard collector. State writes go through
  * `repo.withState` so the wizard composes cleanly with other writers.
@@ -134,6 +173,10 @@ export class OnboardingCollector {
    * active session already exists it is returned as-is (no double-start).
    */
   async start(opts: StartOptions = {}): Promise<OnboardingSession> {
+    const { pruned } = await pruneStaleOnboardingSessions(this.repo, { nowMs: this.now() });
+    if (pruned > 0) {
+      this.logger.info({ count: pruned }, 'onboarding_sessions_pruned');
+    }
     const accountRaw = await this.readRawAccountObject();
     return this.repo.withState(async (state) => {
       const live = activeSessionFromState(state, this.now());

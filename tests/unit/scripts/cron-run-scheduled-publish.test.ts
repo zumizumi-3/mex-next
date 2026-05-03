@@ -16,6 +16,7 @@ import type { XApiSurface, PostResult } from '../../../src/x-api/types.js';
 import type { DiscordPosterImpl } from '../../../src/discord/poster.js';
 import type { PublishItem } from '../../../src/account-state/types.js';
 import { IntegrationRepo } from '../../integration/_helpers.js';
+import { JudgmentEventStream } from '../../../src/observability/judgment-events.js';
 
 let workDir: string;
 let repo: AccountRepo;
@@ -212,6 +213,11 @@ describe('runScheduledPublish', () => {
 
     const xApi = makeXApi();
     const poster = makePoster();
+    const judgmentEvents = new JudgmentEventStream({
+      filePath: join(workDir, 'judgments.jsonl'),
+      idFactory: () => 'evt_draft_missing',
+      now: () => now,
+    });
 
     const outcome = await runScheduledPublish({
       config: makeConfig(),
@@ -219,12 +225,65 @@ describe('runScheduledPublish', () => {
       xApi,
       poster,
       logger: makeLogger(),
+      judgmentEvents,
       now: () => now,
     });
 
     expect(outcome.failed).toBe(1);
     expect(xApi.post).not.toHaveBeenCalled();
     expect(poster.postEscalation).toHaveBeenCalledTimes(1);
+
+    const events = await judgmentEvents.query({ kind: 'publish_draft_missing' });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      accountId: 'zumi-x',
+      kind: 'publish_draft_missing',
+      payload: {
+        publish_id: 'pub_x',
+        content_id: 'missing',
+        error_message: 'draft.text missing or empty',
+      },
+    });
+  });
+
+  it('escalation 失敗時に escalation_failed judgment event を emit する', async () => {
+    const now = new Date('2026-05-02T08:00:00Z');
+    await seedRepo({
+      publishQueue: [
+        buildItem({
+          publish_id: 'pub_x',
+          content_id: 'missing',
+          scheduled_at: '2026-05-02T07:00:00Z',
+        }),
+      ],
+    });
+
+    const xApi = makeXApi();
+    const poster = makePoster();
+    vi.mocked(poster.postEscalation).mockRejectedValueOnce(new Error('discord down'));
+    const judgmentEvents = new JudgmentEventStream({
+      filePath: join(workDir, 'judgments.jsonl'),
+      idFactory: () => 'evt_escalation_failed',
+      now: () => now,
+    });
+
+    const outcome = await runScheduledPublish({
+      config: makeConfig(),
+      repo,
+      xApi,
+      poster,
+      logger: makeLogger(),
+      judgmentEvents,
+      now: () => now,
+    });
+
+    expect(outcome.failed).toBe(1);
+    const events = await judgmentEvents.query({ kind: 'escalation_failed' });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({
+      reason: 'publish failed: pub_x (no draft)',
+      original_kind: 'publish_draft_missing',
+    });
   });
 
   it('24h 超 stale は dueItems が auto-fail し、escalation も走る', async () => {

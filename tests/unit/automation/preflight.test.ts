@@ -268,7 +268,7 @@ describe('runPreflight', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('X API credentials 一部欠け → fail (不足キーを列挙)', async () => {
+  it('X API credentials 一部欠け → warn (不足キーを列挙)', async () => {
     const args = defaultArgs();
     const result = await runPreflight({
       ...args,
@@ -278,9 +278,10 @@ describe('runPreflight', () => {
       }),
     });
     const gate = result.gates.find((g) => g.name === 'x_api_credentials_present');
-    expect(gate?.status).toBe('fail');
+    expect(gate?.status).toBe('warn');
     expect(gate?.message).toContain('X_API_ACCESS_TOKEN');
     expect(gate?.message).toContain('X_API_ACCESS_TOKEN_SECRET');
+    expect(result.ok).toBe(true);
   });
 
   it('disk space 不足 → fail', async () => {

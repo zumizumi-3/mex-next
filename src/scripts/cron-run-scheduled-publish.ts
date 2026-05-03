@@ -26,6 +26,7 @@ import { asPostingRepo } from '../handlers/repo-adapter.js';
 import { createDiscordClient } from '../discord/client.js';
 import { DiscordPosterImpl } from '../discord/poster.js';
 import { escalateOperator } from '../automation/operator-escalation.js';
+import type { JudgmentEventStream } from '../observability/judgment-events.js';
 
 export interface ScheduledPublishDeps {
   readonly config: AppConfig;
@@ -33,6 +34,7 @@ export interface ScheduledPublishDeps {
   readonly xApi: XApiSurface;
   readonly poster: DiscordPosterImpl;
   readonly logger: Logger;
+  readonly judgmentEvents?: JudgmentEventStream;
   readonly now?: () => Date;
 }
 
@@ -60,7 +62,7 @@ export interface ScheduledPublishOutcome {
 export async function runScheduledPublish(
   deps: ScheduledPublishDeps,
 ): Promise<ScheduledPublishOutcome> {
-  const { config, repo, xApi, poster, logger } = deps;
+  const { config, repo, xApi, poster, logger, judgmentEvents } = deps;
   const now = deps.now ?? (() => new Date());
 
   const adaptedRepo = asPostingRepo(repo);
@@ -80,6 +82,8 @@ export async function runScheduledPublish(
         repo,
         poster,
         logger,
+        judgmentEvents,
+        originalKind: 'publish_stale',
       });
     }
   }
@@ -89,7 +93,7 @@ export async function runScheduledPublish(
   let failed = 0;
 
   for (const item of due) {
-    const outcome = await publishOne({ item, config, repo, xApi, poster, logger, now });
+    const outcome = await publishOne({ item, config, repo, xApi, poster, logger, judgmentEvents, now });
     items.push(outcome);
     if (outcome.status === 'published') published += 1;
     else if (outcome.status === 'failed' || outcome.status === 'no_draft') failed += 1;
@@ -116,11 +120,12 @@ interface PublishOneInput {
   readonly xApi: XApiSurface;
   readonly poster: DiscordPosterImpl;
   readonly logger: Logger;
+  readonly judgmentEvents?: JudgmentEventStream;
   readonly now: () => Date;
 }
 
 async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemOutcome> {
-  const { item, config, repo, xApi, poster, logger } = input;
+  const { item, config, repo, xApi, poster, logger, judgmentEvents } = input;
   const adaptedRepo = asPostingRepo(repo);
 
   let draftText: string;
@@ -135,6 +140,14 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
         reason,
         now: input.now(),
       });
+      await emitJudgmentEvent({ judgmentEvents, accountId: config.accountId, logger }, {
+        kind: 'publish_draft_missing',
+        payload: {
+          publish_id: item.publish_id,
+          content_id: item.content_id,
+          error_message: reason,
+        },
+      });
       await tryEscalate({
         reason: `publish failed: ${item.publish_id} (no draft)`,
         detail: `content_id=${item.content_id}`,
@@ -143,6 +156,8 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
         repo,
         poster,
         logger,
+        judgmentEvents,
+        originalKind: 'publish_draft_missing',
       });
       return {
         publishId: item.publish_id,
@@ -164,6 +179,14 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
       reason,
       now: input.now(),
     });
+    await emitJudgmentEvent({ judgmentEvents, accountId: config.accountId, logger }, {
+      kind: 'publish_draft_missing',
+      payload: {
+        publish_id: item.publish_id,
+        content_id: item.content_id,
+        error_message: reason,
+      },
+    });
     await tryEscalate({
       reason: `publish failed: ${item.publish_id} (draft read)`,
       detail: reason,
@@ -171,6 +194,8 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
       repo,
       poster,
       logger,
+      judgmentEvents,
+      originalKind: 'publish_draft_missing',
     });
     return {
       publishId: item.publish_id,
@@ -218,6 +243,8 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
       repo,
       poster,
       logger,
+      judgmentEvents,
+      originalKind: 'publish_x_api_failed',
     });
     return {
       publishId: item.publish_id,
@@ -236,6 +263,8 @@ interface EscalateInput {
   readonly repo: AccountRepo;
   readonly poster: DiscordPosterImpl;
   readonly logger: Logger;
+  readonly judgmentEvents?: JudgmentEventStream;
+  readonly originalKind: string;
 }
 
 async function tryEscalate(input: EscalateInput): Promise<void> {
@@ -250,9 +279,47 @@ async function tryEscalate(input: EscalateInput): Promise<void> {
       repo: input.repo,
     });
   } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     input.logger.error(
-      { error: error instanceof Error ? error.message : String(error) },
+      { error: errorMessage },
       'scheduled_publish.escalation_failed',
+    );
+    await emitJudgmentEvent({
+      judgmentEvents: input.judgmentEvents,
+      accountId: input.config.accountId,
+      logger: input.logger,
+    }, {
+      kind: 'escalation_failed',
+      payload: {
+        reason: input.reason,
+        original_kind: input.originalKind,
+      },
+    });
+  }
+}
+
+async function emitJudgmentEvent(
+  ctx: {
+    readonly judgmentEvents?: JudgmentEventStream;
+    readonly accountId: string;
+    readonly logger: Logger;
+  },
+  event: {
+    readonly kind: string;
+    readonly payload: Record<string, unknown>;
+  },
+): Promise<void> {
+  if (!ctx.judgmentEvents) return;
+  try {
+    await ctx.judgmentEvents.emit({
+      accountId: ctx.accountId,
+      kind: event.kind,
+      payload: event.payload,
+    });
+  } catch (error: unknown) {
+    ctx.logger.warn(
+      { error: error instanceof Error ? error.message : String(error), kind: event.kind },
+      'scheduled_publish.judgment_event_emit_failed',
     );
   }
 }
@@ -289,6 +356,8 @@ async function main(): Promise<void> {
   const log = createLogger({ level: config.logLevel });
   const repo = new AccountRepo(config.accountRepo);
   const xApi = buildXApiOrThrow(config);
+  const { JudgmentEventStream } = await import('../observability/judgment-events.js');
+  const judgmentEvents = new JudgmentEventStream({ filePath: config.judgmentEventsPath });
   const client = createDiscordClient({ logger: log });
   const poster = new DiscordPosterImpl(client, {
     channelMap: config.discordChannelMap,
@@ -298,8 +367,9 @@ async function main(): Promise<void> {
   let outcome: ScheduledPublishOutcome;
   try {
     await client.login(config.discordBotToken);
-    outcome = await runScheduledPublish({ config, repo, xApi, poster, logger: log });
+    outcome = await runScheduledPublish({ config, repo, xApi, poster, logger: log, judgmentEvents });
   } finally {
+    await judgmentEvents.flush().catch(() => undefined);
     try {
       await client.destroy();
     } catch {

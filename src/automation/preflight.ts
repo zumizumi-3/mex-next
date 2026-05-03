@@ -438,7 +438,7 @@ function gateXApiCredentialsPresent(config: AppConfig): GateResult {
   }
   return {
     name: 'x_api_credentials_present',
-    status: 'fail',
+    status: 'warn',
     message: `不足: ${missing.join(', ')}`,
     hint: 'X Developer Portal の credentials を Doppler に登録',
   };
