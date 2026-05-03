@@ -22,10 +22,7 @@
  * queue, and stops a hallucinated "are you sure?" on read-only ops.
  */
 
-import {
-  buildIntentUserPrompt,
-  INTENT_CLASSIFY_SYSTEM,
-} from '../llm/prompts.js';
+import { buildIntentUserPrompt, INTENT_CLASSIFY_SYSTEM } from '../llm/prompts.js';
 import type { LlmProvider } from '../llm/bridge.js';
 import { LlmTimeoutError } from '../llm/bridge.js';
 
@@ -128,7 +125,12 @@ export interface IntentResult {
   confirmationMessage?: string;
   rawResponse?: string;
   /** Why we fell back to unknown — for telemetry / debugging. Optional. */
-  fallbackReason?: 'empty_input' | 'timeout' | 'invalid_json' | 'unsupported_intent' | 'provider_error';
+  fallbackReason?:
+    | 'empty_input'
+    | 'timeout'
+    | 'invalid_json'
+    | 'unsupported_intent'
+    | 'provider_error';
   /** Customer-facing message when intent=unknown. */
   userMessage?: string;
 }
@@ -157,9 +159,7 @@ export interface ClassifyIntentOptions {
  * - confirmationNeeded: forced via destructive/display whitelist
  * - userMessage: only set when intent='unknown' so caller can render verbatim
  */
-export async function classifyIntent(
-  opts: ClassifyIntentOptions,
-): Promise<IntentResult> {
+export async function classifyIntent(opts: ClassifyIntentOptions): Promise<IntentResult> {
   const text = (opts.userText ?? '').trim();
   const emit = (result: IntentResult): IntentResult => {
     try {
@@ -304,7 +304,9 @@ function normalizeArgs(intent: IntentName, args: unknown): Record<string, unknow
   }
 
   if (intent === 'phase.questionnaire_start' || intent === 'phase.questionnaire_status') {
-    const cadence = String(dict.cadence ?? '').trim().toLowerCase();
+    const cadence = String(dict.cadence ?? '')
+      .trim()
+      .toLowerCase();
     if (cadence === 'weekly' || cadence === 'monthly' || cadence === 'quarterly') {
       cleaned.cadence = cadence;
     }
@@ -329,8 +331,8 @@ function normalizeArgs(intent: IntentName, args: unknown): Record<string, unknow
       ).padStart(2, '0')}`;
     }
 
-    const scope = String(dict.scope ?? '').trim();
-    if (scope === 'today_all' || scope === 'one') {
+    const scope = normalizeScheduleCancelScope(intent, dict.scope);
+    if (scope) {
       cleaned.scope = scope;
     }
     return cleaned;
@@ -344,6 +346,30 @@ function normalizeHandle(value: unknown): string {
   if (text.startsWith('@')) text = text.slice(1);
   text = text.split(/\s+/)[0] ?? '';
   return text.replace(/[^A-Za-z0-9_]/g, '');
+}
+
+function normalizeScheduleCancelScope(
+  intent: IntentName,
+  value: unknown,
+): 'today_all' | 'all' | 'one' | undefined {
+  if (intent !== 'schedule.cancel') return undefined;
+  const scope = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  if (!scope) return undefined;
+  if (scope === 'today_all' || scope === 'one' || scope === 'all') return scope;
+  if (scope.includes('今日') || scope.includes('today')) return 'today_all';
+  if (
+    scope.includes('全部') ||
+    scope.includes('全て') ||
+    scope.includes('すべて') ||
+    scope.includes('全消し') ||
+    scope.includes('過去含めて') ||
+    scope.includes('過去')
+  ) {
+    return 'all';
+  }
+  return undefined;
 }
 
 function coerceConfirmation(
@@ -369,13 +395,11 @@ function coerceConfirmation(
   return { confirmationNeeded: true, confirmationMessage: message };
 }
 
-function defaultConfirmationMessage(
-  intent: IntentName,
-  args: Record<string, unknown>,
-): string {
+function defaultConfirmationMessage(intent: IntentName, args: Record<string, unknown>): string {
   switch (intent) {
     case 'schedule.cancel': {
       const scope = String(args.scope ?? '').trim();
+      if (scope === 'all') return 'すべての予約を取り消しますか？';
       if (scope === 'today_all') return '今日の予約をすべて取り消しますか？';
       const timeHint = String(args.time_hint ?? '').trim();
       if (timeHint) return `${timeHint} の予約を取り消しますか？`;

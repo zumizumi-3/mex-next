@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import pino from 'pino';
@@ -71,7 +71,7 @@ async function runFullWizard(collector: OnboardingCollector, sessionId: string):
     } else if (q.type === 'multi-select') {
       answer = q.options?.[0]?.key ?? '';
     } else if (q.type === 'number') {
-      answer = (typeof q.default === 'number' ? q.default : 7);
+      answer = typeof q.default === 'number' ? q.default : 7;
     } else if (q.id === 'x_handle') {
       answer = 'zumi_ops';
     } else if (q.id === 'hot_zones') {
@@ -115,7 +115,11 @@ describe('OnboardingCollector — round-trip', () => {
     expect(writeKnowledgeFiles).toHaveBeenCalledWith(finalize.account);
     const written = await scaf.repo.loadAccount();
     expect(written.display_name).toBe('回答テキスト');
-    expect(typeof written.voice_profile === 'object' ? (written.voice_profile as { distance_to_reader?: string }).distance_to_reader : '').toBe('balanced');
+    expect(
+      typeof written.voice_profile === 'object'
+        ? (written.voice_profile as { distance_to_reader?: string }).distance_to_reader
+        : '',
+    ).toBe('balanced');
   });
 
   it('returns existing active session when start is called twice', async () => {
@@ -128,6 +132,44 @@ describe('OnboardingCollector — round-trip', () => {
     const a = await collector.start();
     const b = await collector.start();
     expect(b.id).toBe(a.id);
+  });
+
+  it('auto-expires active session when updated_at is older than 30 minutes', async () => {
+    scaf = await makeScaffold();
+    let nowMs = Date.parse('2026-05-03T00:00:00.000Z');
+    const collector = new OnboardingCollector({
+      repo: scaf.repo,
+      bridge: scaf.bridge,
+      logger,
+      clock: () => nowMs,
+    });
+    const session = await collector.start();
+
+    nowMs += 31 * 60 * 1000;
+    const active = await collector.getActive();
+    expect(active).toBeNull();
+
+    const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
+      onboarding_sessions: Array<{ id: string; state: string }>;
+    };
+    expect(persisted.onboarding_sessions.find((s) => s.id === session.id)?.state).toBe('expired');
+  });
+
+  it('keeps active session when updated_at is newer than 30 minutes', async () => {
+    scaf = await makeScaffold();
+    let nowMs = Date.parse('2026-05-03T00:00:00.000Z');
+    const collector = new OnboardingCollector({
+      repo: scaf.repo,
+      bridge: scaf.bridge,
+      logger,
+      clock: () => nowMs,
+    });
+    const session = await collector.start();
+
+    nowMs += 5 * 60 * 1000;
+    const active = await collector.getActive();
+    expect(active?.id).toBe(session.id);
+    expect(active?.state).toBe('asking');
   });
 
   it('detects 24h expiry and marks the session expired', async () => {

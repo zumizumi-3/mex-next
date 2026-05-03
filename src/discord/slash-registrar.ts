@@ -47,6 +47,7 @@ const MEX_COMMAND: ApplicationCommandData = {
               description: '対象範囲',
               required: false,
               choices: [
+                { name: 'すべて取り消し (過去含む)', value: 'all' },
                 { name: '今日のみ全部', value: 'today_all' },
                 { name: '一件のみ', value: 'one' },
               ],

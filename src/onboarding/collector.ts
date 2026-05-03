@@ -43,6 +43,8 @@ import {
 /** TTL for an onboarding session: 24h. */
 export const ONBOARDING_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
+const STALE_AFTER_MS = 30 * 60 * 1000;
+
 /** Public-facing onboarding session shape (camelCase, immutable-friendly). */
 export interface OnboardingSession {
   readonly id: string;
@@ -259,7 +261,30 @@ export class OnboardingCollector {
   async getActive(): Promise<OnboardingSession | null> {
     const state = await this.repo.readState();
     const live = activeSessionFromState(state, this.now());
-    return live ? toPublic(live) : null;
+    if (!live) return null;
+
+    const lastTouchMs = Date.parse(live.updated_at);
+    if (Number.isFinite(lastTouchMs) && this.now() - lastTouchMs >= STALE_AFTER_MS) {
+      await this.repo.withState(async (s) => {
+        const sessions = (s.onboarding_sessions ?? []).map((sess) =>
+          sess.id === live.id
+            ? {
+                ...sess,
+                state: 'expired' as const,
+                updated_at: new Date(this.now()).toISOString(),
+              }
+            : sess,
+        );
+        return {
+          state: { ...s, onboarding_sessions: sessions },
+          result: undefined,
+        };
+      });
+      this.logger.info({ session_id: live.id }, 'onboarding_session_auto_expired');
+      return null;
+    }
+
+    return toPublic(live);
   }
 
   /**

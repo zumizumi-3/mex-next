@@ -61,6 +61,36 @@ describe('classifyIntent — happy path', () => {
     expect(result.confirmationMessage).toContain('取り消');
   });
 
+  it('「全部取り消して」→ schedule.cancel scope=all / confirmation forced', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'schedule.cancel',
+        args: { scope: 'all' },
+        confirmation_needed: true,
+      }),
+    );
+    const result = await classifyIntent({ userText: '全部取り消して', bridge });
+    expect(result.intent).toBe('schedule.cancel');
+    expect(result.args.scope).toBe('all');
+    expect(result.confirmationNeeded).toBe(true);
+    expect(result.confirmationMessage).toBe('すべての予約を取り消しますか？');
+  });
+
+  it('「今日だけ取り消し」→ schedule.cancel scope=today_all', async () => {
+    const bridge = makeBridge(
+      JSON.stringify({
+        intent: 'schedule.cancel',
+        args: { scope: 'today_all' },
+        confirmation_needed: true,
+      }),
+    );
+    const result = await classifyIntent({ userText: '今日だけ取り消し', bridge });
+    expect(result.intent).toBe('schedule.cancel');
+    expect(result.args.scope).toBe('today_all');
+    expect(result.confirmationNeeded).toBe(true);
+    expect(result.confirmationMessage).toBe('今日の予約をすべて取り消しますか？');
+  });
+
   it('「@user 追加」→ target.add / no confirmation, handle stripped of @', async () => {
     const bridge = makeBridge(
       JSON.stringify({
@@ -266,6 +296,13 @@ describe('INTENT_FEW_SHOTS coverage', () => {
     expect(intents.has('phase.questionnaire_start')).toBe(true);
     expect(intents.has('phase.questionnaire_status')).toBe(true);
     expect(intents.has('system.regenerate_knowledge')).toBe(true);
+  });
+
+  it('contains schedule.cancel all/today_all examples', () => {
+    const byUser = new Map(INTENT_FEW_SHOTS.map((ex) => [ex.user, ex]));
+    expect(byUser.get('全部取り消して')?.result.args).toEqual({ scope: 'all' });
+    expect(byUser.get('予約全消し')?.result.args).toEqual({ scope: 'all' });
+    expect(byUser.get('今日の予約だけ取り消し')?.result.args).toEqual({ scope: 'today_all' });
   });
 });
 

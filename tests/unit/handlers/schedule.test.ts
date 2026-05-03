@@ -87,9 +87,9 @@ describe('handleScheduleCancel', () => {
     });
     const result = await handleScheduleCancel(scaf.ctx, { publish_id: 'pub_x' });
     expect(result.content).toContain('pub_x');
-    const persisted = JSON.parse(
-      await readFile(join(scaf.workDir, 'state.json'), 'utf-8'),
-    ) as { publish_queue: Array<{ status: string; last_error: string }> };
+    const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
+      publish_queue: Array<{ status: string; last_error: string }>;
+    };
     expect(persisted.publish_queue[0]?.status).toBe('failed_terminal');
     expect(persisted.publish_queue[0]?.last_error).toBe('cancelled_by_user');
   });
@@ -98,6 +98,107 @@ describe('handleScheduleCancel', () => {
     scaf = await setupHandlerTest({ state: { account_id: 'zumi-x', publish_queue: [] } });
     const result = await handleScheduleCancel(scaf.ctx, { publish_id: 'no_such' });
     expect(result.content).toContain('見つかりませんでした');
+  });
+
+  it("scope='all' で日付に関係なく active 全件を markFailed する", async () => {
+    const now = Date.now();
+    scaf = await setupHandlerTest({
+      state: {
+        account_id: 'zumi-x',
+        publish_queue: [
+          {
+            publish_id: 'pub_today',
+            content_id: 'c1',
+            scheduled_at: new Date(now).toISOString(),
+            status: 'scheduled',
+            text_prefix: 'today',
+            variant: 'primary',
+            queued_at: '',
+            executed_at: '',
+            last_error: '',
+          },
+          {
+            publish_id: 'pub_past',
+            content_id: 'c2',
+            scheduled_at: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+            status: 'held',
+            text_prefix: 'past',
+            variant: 'primary',
+            queued_at: '',
+            executed_at: '',
+            last_error: '',
+          },
+          {
+            publish_id: 'pub_done',
+            content_id: 'c3',
+            scheduled_at: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+            status: 'published',
+            text_prefix: 'done',
+            variant: 'primary',
+            queued_at: '',
+            executed_at: '',
+            last_error: '',
+          },
+        ],
+      },
+    });
+    const result = await handleScheduleCancel(scaf.ctx, { scope: 'all' });
+    expect(result.tag).toBe('schedule.cancel.all');
+    expect(result.content).toContain('2 件');
+
+    const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
+      publish_queue: Array<{ publish_id: string; status: string; last_error: string }>;
+    };
+    const byId = Object.fromEntries(persisted.publish_queue.map((item) => [item.publish_id, item]));
+    expect(byId.pub_today?.status).toBe('failed_terminal');
+    expect(byId.pub_today?.last_error).toBe('cancelled_by_user');
+    expect(byId.pub_past?.status).toBe('failed_terminal');
+    expect(byId.pub_past?.last_error).toBe('cancelled_by_user');
+    expect(byId.pub_done?.status).toBe('published');
+  });
+
+  it("scope='today_all' は今日の active のみを markFailed する", async () => {
+    const now = Date.now();
+    scaf = await setupHandlerTest({
+      state: {
+        account_id: 'zumi-x',
+        publish_queue: [
+          {
+            publish_id: 'pub_today',
+            content_id: 'c1',
+            scheduled_at: new Date(now).toISOString(),
+            status: 'scheduled',
+            text_prefix: 'today',
+            variant: 'primary',
+            queued_at: '',
+            executed_at: '',
+            last_error: '',
+          },
+          {
+            publish_id: 'pub_past',
+            content_id: 'c2',
+            scheduled_at: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+            status: 'scheduled',
+            text_prefix: 'past',
+            variant: 'primary',
+            queued_at: '',
+            executed_at: '',
+            last_error: '',
+          },
+        ],
+      },
+    });
+    const result = await handleScheduleCancel(scaf.ctx, { scope: 'today_all' });
+    expect(result.tag).toBe('schedule.cancel.today_all');
+    expect(result.content).toContain('1 件');
+
+    const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
+      publish_queue: Array<{ publish_id: string; status: string; last_error: string }>;
+    };
+    const byId = Object.fromEntries(persisted.publish_queue.map((item) => [item.publish_id, item]));
+    expect(byId.pub_today?.status).toBe('failed_terminal');
+    expect(byId.pub_today?.last_error).toBe('cancelled_by_user');
+    expect(byId.pub_past?.status).toBe('scheduled');
   });
 });
 

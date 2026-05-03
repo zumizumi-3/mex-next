@@ -3,7 +3,7 @@
  *
  * - schedule.list      → render active publish_queue items
  * - schedule.detail    → render one item's preview
- * - schedule.cancel    → markFailed (manual cancel) on one or all today
+ * - schedule.cancel    → markFailed (manual cancel) on one, all today, or all active
  * - schedule.publish_now → invoke X API immediately, then markPublished
  *
  * All state mutations go through `posting/queue.ts` so flock + atomic
@@ -74,7 +74,10 @@ async function enrichItems(
   return out;
 }
 
-function groupItems(enriched: EnrichedItem[], now: Date): {
+function groupItems(
+  enriched: EnrichedItem[],
+  now: Date,
+): {
   today: EnrichedItem[];
   tomorrow: EnrichedItem[];
   later: EnrichedItem[];
@@ -212,6 +215,25 @@ export async function handleScheduleCancel(
   args: HandlerArgs,
 ): Promise<HandlerResult> {
   const scope = String(args.scope ?? '').trim();
+  if (scope === 'all') {
+    const state = await ctx.repo.loadState();
+    const queue: PublishItem[] = (state.publish_queue ?? []) as unknown as PublishItem[];
+    let cancelled = 0;
+    for (const item of queue) {
+      if (!isActive(item)) continue;
+      await markFailed({
+        repo: asPostingRepo(ctx.repo),
+        publishId: item.publish_id,
+        reason: 'cancelled_by_user',
+      });
+      cancelled += 1;
+    }
+    return {
+      content: `🛑 すべての予約 ${cancelled} 件を取り消しました。`,
+      tag: 'schedule.cancel.all',
+    };
+  }
+
   if (scope === 'today_all') {
     const state = await ctx.repo.loadState();
     const queue: PublishItem[] = (state.publish_queue ?? []) as unknown as PublishItem[];
@@ -221,7 +243,11 @@ export async function handleScheduleCancel(
       if (!isActive(item)) continue;
       const when = item.scheduled_at ? formatJst(item.scheduled_at) : '';
       if (!when.startsWith(`${today} `)) continue;
-      await markFailed({ repo: asPostingRepo(ctx.repo), publishId: item.publish_id, reason: 'cancelled_by_user' });
+      await markFailed({
+        repo: asPostingRepo(ctx.repo),
+        publishId: item.publish_id,
+        reason: 'cancelled_by_user',
+      });
       cancelled += 1;
     }
     return {
@@ -275,14 +301,22 @@ export async function handleSchedulePublishNow(
   }
   try {
     const posted = await ctx.xApi.post(draft.text);
-    await markPublished({ repo: asPostingRepo(ctx.repo), publishId: target.publish_id, tweetId: posted.id });
+    await markPublished({
+      repo: asPostingRepo(ctx.repo),
+      publishId: target.publish_id,
+      tweetId: posted.id,
+    });
     return {
       content: `✅ 投稿しました (tweet id: \`${posted.id}\`).`,
       tag: 'schedule.publish_now.ok',
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await markFailed({ repo: asPostingRepo(ctx.repo), publishId: target.publish_id, reason: `publish_now_failed: ${message}` });
+    await markFailed({
+      repo: asPostingRepo(ctx.repo),
+      publishId: target.publish_id,
+      reason: `publish_now_failed: ${message}`,
+    });
     void ctx.judgmentEvents
       ?.emit({
         accountId: ctx.accountId,

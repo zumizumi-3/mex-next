@@ -33,8 +33,7 @@ function makeMockInteraction(init: MockInteractionInit): {
     commandName: 'mex',
     user: init.userId ? { id: init.userId } : null,
     options: {
-      getSubcommandGroup: (_required?: boolean): string | null =>
-        init.subcommandGroup ?? null,
+      getSubcommandGroup: (_required?: boolean): string | null => init.subcommandGroup ?? null,
       getSubcommand: (_required?: boolean): string => init.subcommand,
       getString: (name: string, required?: boolean): string | null => {
         const value = stringOptions[name] ?? null;
@@ -99,9 +98,7 @@ describe('dispatchSlashCommand', () => {
 
   it('routes /mex update to system.update intent', async () => {
     let invokedIntent: string | null = null;
-    const handler: Handler = async (
-      _ctx: HandlerContext,
-    ): Promise<HandlerResult> => {
+    const handler: Handler = async (_ctx: HandlerContext): Promise<HandlerResult> => {
       invokedIntent = 'system.update';
       return { content: 'self-update triggered' };
     };
@@ -139,6 +136,31 @@ describe('dispatchSlashCommand', () => {
     });
     expect(invokedIntent).toBe('system.regenerate_knowledge');
     expect(edits[0]).toContain('knowledge');
+  });
+
+  it("passes schedule cancel scope='all' to the handler", async () => {
+    let observedArgs: Record<string, unknown> | null = null;
+    const handler: Handler = async (
+      _ctx: HandlerContext,
+      args: Record<string, unknown>,
+    ): Promise<HandlerResult> => {
+      observedArgs = args;
+      return { content: 'cancelled' };
+    };
+    const handlers: HandlersMap = { 'schedule.cancel': handler };
+    const { interaction, edits } = makeMockInteraction({
+      userId: 'op-1',
+      subcommand: 'cancel',
+      subcommandGroup: 'schedule',
+      stringOptions: { scope: 'all' },
+    });
+    await dispatchSlashCommand({
+      interaction,
+      handlers,
+      handlerContext: makeBaseContext(),
+    });
+    expect(observedArgs).toMatchObject({ scope: 'all' });
+    expect(edits[0]).toBe('cancelled');
   });
 
   it('passes requesterUserId=null when interaction has no user', async () => {

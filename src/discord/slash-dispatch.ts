@@ -47,7 +47,7 @@ export async function dispatchSlashCommand(opts: DispatchSlashOptions): Promise<
     const scope = interaction.options.getString('scope');
     if (publishId) args.publish_id = publishId;
     if (timeHint) args.time_hint = timeHint;
-    if (scope) args.scope = scope;
+    if (scope === 'all' || scope === 'today_all' || scope === 'one') args.scope = scope;
   }
   if (group === 'post' && subcommand === 'create') {
     const topic = interaction.options.getString('topic');

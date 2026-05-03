@@ -50,7 +50,7 @@ export const SUPPORTED_INTENT_NAMES: readonly string[] = [
 
 const INTENT_ARG_SCHEMA_LINES = [
   'schedule.list = no args',
-  "schedule.cancel = {publish_id?: string, time_hint?: 'HH:MM', scope?: 'today_all'|'one'}",
+  "schedule.cancel = {publish_id?: string, time_hint?: 'HH:MM', scope?: 'today_all'|'all'|'one'}",
   "schedule.publish_now = {publish_id?: string, time_hint?: 'HH:MM'}",
   "schedule.detail = {publish_id?: string, time_hint?: 'HH:MM'}",
   'post.create = {topic?: string}',
@@ -84,6 +84,7 @@ const INTENT_RULES = [
   'When confirmation_needed=true, ALWAYS include a short Japanese confirmation_message ' +
     '(1 sentence, ends with a question mark).',
   'Never invent fields outside the listed schema. If the user does not provide a value, omit the key.',
+  "For schedule.cancel, Japanese phrases like '全部', '全て', 'すべて', '予約全消し', or '過去含めて' mean scope='all' (cancel every active scheduled item, ignoring date). Phrases like '今日だけ' mean scope='today_all'.",
   'If the user input is empty, ambiguous, or off-topic, return intent=unknown with confirmation_needed=false.',
   'Return ONLY a single JSON object. No markdown fences, no commentary.',
 ];
@@ -132,6 +133,51 @@ export const INTENT_FEW_SHOTS: readonly IntentExample[] = [
       args: { time_hint: '06:18' },
       confirmation_needed: true,
       confirmation_message: '06:18 の予約を取り消しますか？',
+    },
+  },
+  {
+    user: '全部取り消して',
+    result: {
+      intent: 'schedule.cancel',
+      args: { scope: 'all' },
+      confirmation_needed: true,
+      confirmation_message: 'すべての予約を取り消しますか？',
+    },
+  },
+  {
+    user: '予約中の投稿をすべて取り消してほしい',
+    result: {
+      intent: 'schedule.cancel',
+      args: { scope: 'all' },
+      confirmation_needed: true,
+      confirmation_message: 'すべての予約を取り消しますか？',
+    },
+  },
+  {
+    user: '昨日までの予約も全部消して',
+    result: {
+      intent: 'schedule.cancel',
+      args: { scope: 'all' },
+      confirmation_needed: true,
+      confirmation_message: 'すべての予約 (過去残り含む) を取り消しますか？',
+    },
+  },
+  {
+    user: '予約全消し',
+    result: {
+      intent: 'schedule.cancel',
+      args: { scope: 'all' },
+      confirmation_needed: true,
+      confirmation_message: 'すべての予約を取り消しますか？',
+    },
+  },
+  {
+    user: '今日の予約だけ取り消し',
+    result: {
+      intent: 'schedule.cancel',
+      args: { scope: 'today_all' },
+      confirmation_needed: true,
+      confirmation_message: '今日の予約をすべて取り消しますか？',
     },
   },
   {
