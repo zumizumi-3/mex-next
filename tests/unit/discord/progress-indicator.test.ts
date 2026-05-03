@@ -7,14 +7,19 @@ import {
 
 interface MockMessage extends EditableMessage {
   edits: string[];
+  editPayloads: Array<string | { content: string; components?: ReadonlyArray<unknown> }>;
 }
 
 function makeMockChannelAndMessage(): { channel: ProgressChannel; message: MockMessage } {
   const message: MockMessage = {
     edits: [],
-    edit: vi.fn(async (content: string) => {
-      message.edits.push(content);
-    }),
+    editPayloads: [],
+    edit: vi.fn(
+      async (content: string | { content: string; components?: ReadonlyArray<unknown> }) => {
+        message.editPayloads.push(content);
+        message.edits.push(typeof content === 'string' ? content : content.content);
+      },
+    ),
   };
   const channel: ProgressChannel = {
     send: vi.fn(async (_content: string) => message),
@@ -139,5 +144,18 @@ describe('createProgressIndicator', () => {
     await indicator.done(safeText);
     expect(message.edits[0]).toBe(safeText);
     expect(message.edits[0]).not.toContain('…(続きは略)');
+  });
+
+  it('passes components through on done()', async () => {
+    const { message, channel } = makeMockChannelAndMessage();
+    const indicator = createProgressIndicator({ channel });
+    const components = [{ type: 1, components: [{ type: 2, custom_id: 'btn-1' }] }];
+    await indicator.start();
+    await indicator.done('選んでください。', { components });
+
+    expect(message.editPayloads[0]).toEqual({
+      content: '選んでください。',
+      components,
+    });
   });
 });

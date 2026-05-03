@@ -35,6 +35,7 @@ import {
   type PendingConfirmationStore,
 } from './pending-confirmation-store.js';
 import { TOOL_SPECS } from '../handlers/tool-specs.js';
+import type { ToolSpec } from '../handlers/tool-specs.js';
 import { runAgentLoop, type AgentLoopResult } from '../llm/agent-loop.js';
 import { AGENT_LOOP_SYSTEM } from '../llm/prompts.js';
 import { buildStateSnapshot } from '../llm/state-snapshot.js';
@@ -44,7 +45,7 @@ export interface IntentDrivenRunnerOptions {
   bridge: LlmProvider;
   handlers: HandlersMap;
   handlerContext: HandlerContext;
-  agentLoop?: { bridge: LlmProvider; llmKind?: LlmKind };
+  agentLoop?: { bridge: LlmProvider; llmKind?: LlmKind; toolSpecs?: ToolSpec[] };
   /** Pending confirmation store. Defaults to an in-memory store. */
   pendingConfirmations?: PendingConfirmationStore;
 }
@@ -93,7 +94,7 @@ export class IntentDrivenRunner implements ConversationRunner {
   private readonly bridge: LlmProvider;
   private readonly handlers: HandlersMap;
   private readonly handlerContext: HandlerContext;
-  private readonly agentLoop?: { bridge: LlmProvider; llmKind?: LlmKind };
+  private readonly agentLoop?: { bridge: LlmProvider; llmKind?: LlmKind; toolSpecs?: ToolSpec[] };
 
   private readonly pendingConfirmations: PendingConfirmationStore;
 
@@ -262,7 +263,7 @@ export class IntentDrivenRunner implements ConversationRunner {
         bridge: this.agentLoop.bridge,
         llmKind: this.agentLoop.llmKind,
         systemPrompt: AGENT_LOOP_SYSTEM,
-        toolSpecs: TOOL_SPECS,
+        toolSpecs: this.agentLoop.toolSpecs ?? TOOL_SPECS,
         stateSnapshot,
         handlerContext: input.turnHandlerContext,
         userMessage: input.userText,
@@ -327,7 +328,16 @@ export class IntentDrivenRunner implements ConversationRunner {
 
     return {
       output: result.reply,
-      metadata: { agentLoop: true, trace: result.trace },
+      ...(result.silent ? { suppressReply: true } : {}),
+      ...(result.components ? { components: result.components } : {}),
+      ...(result.followUp ? { followUp: result.followUp } : {}),
+      metadata: {
+        intent: 'agent_loop',
+        tag: result.tag ?? null,
+        awaiting_approval: false,
+        agentLoop: true,
+        trace: result.trace,
+      },
     };
   }
 
@@ -428,6 +438,8 @@ export class IntentDrivenRunner implements ConversationRunner {
       return {
         output: result.content,
         ...(result.silent ? { suppressReply: true } : {}),
+        ...(result.components ? { components: result.components } : {}),
+        ...(result.followUp ? { followUp: result.followUp } : {}),
         metadata: { intent: intent.intent, tag: result.tag ?? null },
       };
     } catch (error) {

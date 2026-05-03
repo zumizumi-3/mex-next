@@ -29,6 +29,8 @@ import { TurnMessageSchema, type TurnMessage } from './turn-message.js';
 export interface TurnResult {
   readonly output: string;
   readonly suppressReply?: boolean;
+  readonly components?: ReadonlyArray<unknown>;
+  readonly followUp?: { content: string; delaySec: number };
   readonly metadata?: Readonly<Record<string, unknown>>;
 }
 

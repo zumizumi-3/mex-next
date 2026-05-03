@@ -39,11 +39,13 @@ describe('runAgentLoop', () => {
 
   it('JSON ブロックの前後に余計な text があっても parse できる', async () => {
     const scaf = await setupHandlerTest();
-    const bridge = textBridge([
-      'Here is the result:',
-      '{"reply":"予約はありません。","tool_call":null,"needs_confirmation":false}',
-      'Done.',
-    ].join('\n'));
+    const bridge = textBridge(
+      [
+        'Here is the result:',
+        '{"reply":"予約はありません。","tool_call":null,"needs_confirmation":false}',
+        'Done.',
+      ].join('\n'),
+    );
 
     try {
       const result = await runAgentLoop({
@@ -152,7 +154,9 @@ describe('runAgentLoop', () => {
 
   it('valid JSON / tool_call=null は通常 reply を返す', async () => {
     const scaf = await setupHandlerTest();
-    const bridge = textBridge('{"reply":"予約はありません。","tool_call":null,"needs_confirmation":false}');
+    const bridge = textBridge(
+      '{"reply":"予約はありません。","tool_call":null,"needs_confirmation":false}',
+    );
 
     try {
       const result = await runAgentLoop({
@@ -240,6 +244,47 @@ describe('runAgentLoop', () => {
     }
   });
 
+  it('tool 実行成功時に components / silent / followUp / tag を返す', async () => {
+    const scaf = await setupHandlerTest();
+    const components = [{ type: 1, components: [{ type: 2, custom_id: 'choice-1' }] }];
+    const followUp = { content: '遅延メッセージ', delaySec: 5 };
+    const handler = vi.fn(async () => ({
+      content: '選択してください',
+      components,
+      silent: true,
+      followUp,
+      tag: 'rich.tool',
+    }));
+    const spec = toolSpec({ name: 'show_choices', destructive: false, handler });
+    const bridge = jsonBridge({
+      reply: '選択肢を表示します。',
+      tool_call: { name: 'show_choices', input: {} },
+      needs_confirmation: false,
+    });
+
+    try {
+      const result = await runAgentLoop({
+        bridge,
+        systemPrompt: 'system',
+        toolSpecs: [spec],
+        stateSnapshot: snapshot(),
+        handlerContext: scaf.ctx,
+        userMessage: '選択肢を見せて',
+        logger: pino({ level: 'silent' }),
+      });
+
+      expect(result).toMatchObject({
+        reply: '選択してください',
+        components,
+        silent: true,
+        followUp,
+        tag: 'rich.tool',
+      });
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
   it('TOOL_SPECS の tool 名を 17 件に固定する', () => {
     expect(TOOL_SPECS.map((s) => s.name)).toEqual([...TOOL_NAMES]);
     expect(TOOL_SPECS).toHaveLength(17);
@@ -317,7 +362,7 @@ describe('runAgentLoop', () => {
     }
   });
 
-  it('run_system_update: operator allowlist 外は permission_denied を tool error として返す', async () => {
+  it('run_system_update: operator allowlist 外は顧客向け denial message を返す', async () => {
     const scaf = await setupHandlerTest();
     const bridge = jsonBridge({
       reply: '❌ operator 権限がないため実行できません。',
@@ -341,7 +386,7 @@ describe('runAgentLoop', () => {
         logger: pino({ level: 'silent' }),
       });
 
-      expect(result.reply).toContain('permission_denied');
+      expect(result.reply).toBe('⚠️ この操作は operator にのみ許可されています。');
       expect(result.trace[0]).toEqual({
         tool: 'run_system_update',
         input: {},
@@ -416,9 +461,7 @@ function textBridge(text: string): LlmProvider & { calls: LlmCallOptions[] } {
   };
 }
 
-function snapshot(
-  queue: Partial<AgentStateSnapshot['queue']> = {},
-): AgentStateSnapshot {
+function snapshot(queue: Partial<AgentStateSnapshot['queue']> = {}): AgentStateSnapshot {
   return {
     queue: {
       today_active: queue.today_active ?? 1,

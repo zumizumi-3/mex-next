@@ -156,7 +156,13 @@ export async function handleDiscordMessage(
       // posting "✅ 完了" + a follow-up. If output is empty we still close
       // the indicator with the default ✅.
       const finalText = !result.suppressReply ? result.output.trim() : '';
-      await progress.done(finalText || undefined);
+      await progress.done(
+        finalText || undefined,
+        result.components ? { components: result.components } : undefined,
+      );
+      if (result.followUp) {
+        scheduleFollowUp(replyChannel, result.followUp, log);
+      }
       // If suppressReply is false but output is empty, progress.done() already
       // showed ✅ — that's the right UX (handler explicitly returned nothing).
     });
@@ -442,6 +448,17 @@ async function sendSafe(
   } catch (error) {
     logger?.warn({ error: errMsg(error) }, 'discord_send_failed');
   }
+}
+
+function scheduleFollowUp(
+  channel: TextBasedChannel | DMChannel,
+  followUp: { content: string; delaySec: number },
+  logger?: Logger,
+): void {
+  const delayMs = Math.max(0, followUp.delaySec) * 1000;
+  setTimeout(() => {
+    void sendSafe(channel, followUp.content, logger);
+  }, delayMs);
 }
 
 function formatUserFacingError(error: unknown): string {

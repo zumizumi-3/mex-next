@@ -72,6 +72,11 @@ export interface AgentLoopResult {
   /** Fallback for defensive coverage gaps, e.g. model requested an unknown tool. */
   fallbackToLegacy?: boolean;
   fallbackReason?: 'unknown_tool' | 'invalid_json' | 'invalid_shape';
+  /** Tool 由来の rich return を runner に渡すための pass-through field. */
+  components?: ReadonlyArray<unknown>;
+  silent?: boolean;
+  followUp?: { content: string; delaySec: number };
+  tag?: string;
 }
 
 interface AgentStructuredResponse {
@@ -98,10 +103,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
   const blockText = extractJsonBlock(response.text);
   if (!blockText) {
-    opts.logger.warn(
-      { preview: response.text.slice(0, 200) },
-      'agent_loop_no_json_block',
-    );
+    opts.logger.warn({ preview: response.text.slice(0, 200) }, 'agent_loop_no_json_block');
     return {
       reply: '',
       trace: [],
@@ -151,9 +153,10 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     }
   }
 
-  const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
-    ? parsed.reply.trim()
-    : 'すみません、うまく返答を作れませんでした。';
+  const reply =
+    typeof parsed.reply === 'string' && parsed.reply.trim()
+      ? parsed.reply.trim()
+      : 'すみません、うまく返答を作れませんでした。';
 
   if (!parsed.tool_call) {
     return { reply, trace: [] };
@@ -167,7 +170,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
   }
 
   const toolInput = asRecord(parsed.tool_call.input);
-  const needsApproval = spec.destructive && !approvalMatches(opts.pendingApproval, spec.name, toolInput);
+  const needsApproval =
+    spec.destructive && !approvalMatches(opts.pendingApproval, spec.name, toolInput);
   if (needsApproval) {
     return {
       reply,
@@ -195,10 +199,19 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
   // parsed.reply は「実行します」程度の短文なので捨てて、handler が
   // 顧客に提示したい完全な情報を伝える。失敗時は parsed.reply を error
   // と一緒に表示。
+  if (result.ok) {
+    return {
+      reply: result.output.trim() || reply,
+      trace,
+      ...(result.components ? { components: result.components } : {}),
+      ...(result.silent ? { silent: true } : {}),
+      ...(result.followUp ? { followUp: result.followUp } : {}),
+      ...(result.tag ? { tag: result.tag } : {}),
+    };
+  }
+
   return {
-    reply: result.ok
-      ? result.output.trim() || reply
-      : `${reply}\n${result.error}`.trim(),
+    reply: result.userMessage ?? `${reply}\n${result.error}`.trim(),
     trace,
   };
 }

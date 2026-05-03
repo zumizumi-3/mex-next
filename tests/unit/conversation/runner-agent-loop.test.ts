@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildHandlers } from '../../../src/handlers/index.js';
+import type { ToolSpec } from '../../../src/handlers/tool-specs.js';
 import { IntentDrivenRunner } from '../../../src/conversation/runner.js';
 import { buildTurnMessage } from '../../../src/conversation/turn-message.js';
 import { createPendingConfirmationStore } from '../../../src/conversation/pending-confirmation-store.js';
@@ -41,6 +42,56 @@ describe('IntentDrivenRunner agent loop', () => {
       expect(result.output).toBe('🗓️ 予約 1 件です。');
       expect(result.metadata?.agentLoop).toBe(true);
       expect(agentBridge.calls).toHaveLength(1);
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
+  it('agent loop の rich result を TurnResult に pass through する', async () => {
+    const scaf = await setupHandlerTest();
+    const components = [{ type: 1, components: [{ type: 2, custom_id: 'runner-choice' }] }];
+    const followUp = { content: 'あとで確認します', delaySec: 7 };
+    const handler = vi.fn(async () => ({
+      content: '選択してください',
+      components,
+      silent: true,
+      followUp,
+      tag: 'runner.rich',
+    }));
+    const toolSpecs = [toolSpec({ name: 'rich_result', handler })];
+    const agentBridge = jsonBridge({
+      reply: '選択肢を出します。',
+      tool_call: { name: 'rich_result', input: {} },
+      needs_confirmation: false,
+    });
+    const runner = new IntentDrivenRunner({
+      bridge: unusedBridge(),
+      handlers: buildHandlers(),
+      handlerContext: scaf.ctx,
+      agentLoop: { bridge: agentBridge, toolSpecs },
+    });
+
+    try {
+      const result = await runner.run({
+        conversationKey: 'conv_1',
+        accountId: 'zumi-x',
+        turnId: 'turn_1',
+        message: buildTurnMessage({ content: '選択肢', author: { id: 'u1' } }),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result).toMatchObject({
+        output: '選択してください',
+        suppressReply: true,
+        components,
+        followUp,
+      });
+      expect(result.metadata).toMatchObject({
+        intent: 'agent_loop',
+        tag: 'runner.rich',
+        awaiting_approval: false,
+        agentLoop: true,
+      });
     } finally {
       await scaf.cleanup();
     }
@@ -116,15 +167,13 @@ describe('IntentDrivenRunner agent loop', () => {
       const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
         publish_queue: Array<{ status: string }>;
       };
-      expect(persisted.publish_queue.every((item) => item.status === 'failed_terminal')).toBe(
-        true,
-      );
+      expect(persisted.publish_queue.every((item) => item.status === 'failed_terminal')).toBe(true);
     } finally {
       await scaf.cleanup();
     }
   });
 
-  it("unknown_tool fallback 時に agent_loop_fallback event を emit して legacy に降りる", async () => {
+  it('unknown_tool fallback 時に agent_loop_fallback event を emit して legacy に降りる', async () => {
     const scaf = await setupHandlerTest();
     const judgmentEvents = new JudgmentEventStream({
       filePath: join(scaf.workDir, 'judgment-events.jsonl'),
@@ -212,5 +261,16 @@ function queueItem(
     queued_at: '',
     executed_at: '',
     last_error: '',
+  };
+}
+
+function toolSpec(input: { name: string; handler: ToolSpec['handler'] }): ToolSpec {
+  return {
+    name: input.name,
+    description: input.name,
+    inputSchema: { type: 'object', properties: {} },
+    destructive: false,
+    buildHandlerArgs: (args) => args,
+    handler: input.handler,
   };
 }

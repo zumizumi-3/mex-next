@@ -24,7 +24,9 @@ import { DISCORD_MESSAGE_SOFT_LIMIT, PROGRESS_TEMPLATES, truncateForDiscord } fr
  * without depending on the heavy discord.js Message class.
  */
 export interface EditableMessage {
-  edit(content: string): Promise<unknown>;
+  edit(
+    content: string | { content: string; components?: ReadonlyArray<unknown> },
+  ): Promise<unknown>;
 }
 
 /**
@@ -40,7 +42,7 @@ export type ProgressState = 'idle' | 'running' | 'done' | 'failed' | 'cancelled'
 export interface ProgressIndicator {
   start(initialStatus?: string): Promise<void>;
   updateStatus(status: string): Promise<void>;
-  done(finalText?: string): Promise<void>;
+  done(finalText?: string, options?: { components?: ReadonlyArray<unknown> }): Promise<void>;
   failed(finalText?: string): Promise<void>;
   cancelled(finalText?: string): Promise<void>;
   /** Current state — useful for tests and for handlers that need to skip. */
@@ -80,12 +82,20 @@ export function createProgressIndicator(
     return `${prefix}⏳ ${trimmed}`;
   };
 
-  const safeEdit = async (content: string): Promise<void> => {
+  const safeEdit = async (
+    content: string,
+    options?: { components?: ReadonlyArray<unknown> },
+  ): Promise<void> => {
     if (!message) {
       return;
     }
     try {
-      await message.edit(truncateForDiscord(content, DISCORD_MESSAGE_SOFT_LIMIT));
+      const truncated = truncateForDiscord(content, DISCORD_MESSAGE_SOFT_LIMIT);
+      if (options?.components) {
+        await message.edit({ content: truncated, components: options.components });
+      } else {
+        await message.edit(truncated);
+      }
     } catch (error) {
       log?.warn(
         { error: error instanceof Error ? error.message : String(error) },
@@ -129,13 +139,16 @@ export function createProgressIndicator(
       await safeEdit(renderRunning(currentStatus));
     },
 
-    async done(finalText?: string): Promise<void> {
+    async done(
+      finalText?: string,
+      options?: { components?: ReadonlyArray<unknown> },
+    ): Promise<void> {
       if (state === 'done' || state === 'failed' || state === 'cancelled') {
         return;
       }
       state = 'done';
       const text = finalText?.trim() || PROGRESS_TEMPLATES.done;
-      await safeEdit(`${prefix}${text}`);
+      await safeEdit(`${prefix}${text}`, options);
     },
 
     async failed(finalText?: string): Promise<void> {
