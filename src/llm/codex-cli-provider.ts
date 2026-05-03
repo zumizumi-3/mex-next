@@ -7,6 +7,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -101,7 +102,7 @@ export function createCodexCliProvider(opts: CodexCliProviderOptions = {}): LlmP
         '-',
       ];
       const input = callOpts.jsonSchema
-        ? `${systemPrompt}\n\nReturn only a JSON object matching the provided output schema.\n\n---\n\n${userPrompt}`
+        ? buildStructuredInput(systemPrompt, userPrompt)
         : `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
       let result: CodexExecaResult;
@@ -156,6 +157,21 @@ export function createCodexCliProvider(opts: CodexCliProviderOptions = {}): LlmP
       };
     },
   };
+}
+
+function buildStructuredInput(systemPrompt: string, userPrompt: string): string {
+  const fence = `<<MEX_SCHEMA_GUIDE_${Date.now().toString(36)}_${randomBytes(8).toString('hex')}>>`;
+  return [
+    systemPrompt,
+    '',
+    fence,
+    'Return only a JSON object that matches the schema in --output-schema. No prose, no markdown code fence.',
+    fence,
+    '',
+    '---',
+    '',
+    userPrompt,
+  ].join('\n');
 }
 
 function getErrorMessage(err: unknown): string {

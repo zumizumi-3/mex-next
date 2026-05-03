@@ -137,6 +137,8 @@ export const AGENT_LOOP_SYSTEM = [
 ].join('\n');
 
 /**
+ * @deprecated legacy intent classifier fallback only — agent loop is the primary path.
+ *
  * Few-shot examples for the legacy intent router only. Agent loop uses
  * AGENT_LOOP_SYSTEM + tool specs instead; these stay as the fallback
  * surface for Anthropic SDK unavailable / agent-loop failure paths.

@@ -137,7 +137,9 @@ describe('createCodexCliProvider', () => {
     expect(args[schemaFlagIndex + 1]).toMatch(/schema\.json$/);
     expect(runner.mock.calls[0]?.[2]).toEqual(
       expect.objectContaining({
-        input: expect.stringContaining('Return only a JSON object matching the provided output schema.'),
+        input: expect.stringMatching(
+          /(<<MEX_SCHEMA_GUIDE_[0-9a-z]+_[0-9a-f]{16}>>)\nReturn only a JSON object that matches the schema in --output-schema\. No prose, no markdown code fence\.\n\1/,
+        ),
       }),
     );
   });

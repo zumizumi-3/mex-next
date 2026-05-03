@@ -35,11 +35,11 @@ export {
 export {
   KIND_SYSTEM_PROMPT,
   SUPPORTED_INTENT_NAMES,
-  INTENT_FEW_SHOTS,
   AGENT_LOOP_LEGACY_FALLBACK,
   AGENT_LOOP_SYSTEM,
-  buildIntentUserPrompt,
 } from './prompts.js';
+/** @deprecated legacy intent classifier fallback only — agent loop is the primary path. */
+export { INTENT_FEW_SHOTS, buildIntentUserPrompt } from './prompts.js';
 
 export type { AgentStateSnapshot } from './agent-loop.js';
 export { runAgentLoop } from './agent-loop.js';

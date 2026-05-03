@@ -13,12 +13,13 @@ describe('createPendingConfirmationStore', () => {
     const store = createPendingConfirmationStore();
     store.set({
       conversationKey: 'c1',
+      kind: 'legacy',
       intent: 'system.update',
       args: {},
       promptShown: 'really?',
     });
     const got = store.get('c1');
-    expect(got?.intent).toBe('system.update');
+    expect(got).toMatchObject({ kind: 'legacy', intent: 'system.update' });
     store.delete('c1');
     expect(store.get('c1')).toBeNull();
   });
@@ -28,12 +29,13 @@ describe('createPendingConfirmationStore', () => {
     const store = createPendingConfirmationStore({ ttlMs: 100, now: () => now });
     store.set({
       conversationKey: 'c1',
+      kind: 'legacy',
       intent: 'schedule.cancel',
       args: {},
       promptShown: 'really?',
     });
     now = 1_050;
-    expect(store.get('c1')?.intent).toBe('schedule.cancel');
+    expect(store.get('c1')).toMatchObject({ kind: 'legacy', intent: 'schedule.cancel' });
     now = 1_200;
     expect(store.get('c1')).toBeNull();
   });
@@ -42,30 +44,61 @@ describe('createPendingConfirmationStore', () => {
     const store = createPendingConfirmationStore();
     store.set({
       conversationKey: 'c1',
+      kind: 'legacy',
       intent: 'system.update',
       args: {},
       promptShown: 'a',
     });
     store.set({
       conversationKey: 'c1',
+      kind: 'legacy',
       intent: 'cadence.skip_today',
       args: {},
       promptShown: 'b',
     });
-    expect(store.get('c1')?.intent).toBe('cadence.skip_today');
+    expect(store.get('c1')).toMatchObject({ kind: 'legacy', intent: 'cadence.skip_today' });
   });
 
   it('round-trips a tool pending entry', () => {
     const store = createPendingConfirmationStore();
     store.set({
       conversationKey: 'c1',
+      kind: 'tool',
       pendingTool: { name: 'cancel_publish_items', input: { scope: 'all' } },
       promptShown: 'really?',
     });
-    expect(store.get('c1')?.pendingTool).toEqual({
-      name: 'cancel_publish_items',
-      input: { scope: 'all' },
+    expect(store.get('c1')).toMatchObject({
+      kind: 'tool',
+      pendingTool: {
+        name: 'cancel_publish_items',
+        input: { scope: 'all' },
+      },
     });
+  });
+
+  it('rejects entries with both legacy and tool fields', () => {
+    const store = createPendingConfirmationStore();
+    expect(() =>
+      store.set({
+        conversationKey: 'c1',
+        kind: 'tool',
+        intent: 'schedule.cancel',
+        args: {},
+        pendingTool: { name: 'cancel_publish_items', input: { scope: 'all' } },
+        promptShown: 'really?',
+      } as never),
+    ).toThrow(/invalid pending confirmation/);
+  });
+
+  it('rejects entries without the required shape for their kind', () => {
+    const store = createPendingConfirmationStore();
+    expect(() =>
+      store.set({
+        conversationKey: 'c1',
+        kind: 'legacy',
+        promptShown: 'really?',
+      } as never),
+    ).toThrow(/invalid pending confirmation/);
   });
 });
 

@@ -37,6 +37,79 @@ describe('runAgentLoop', () => {
     }
   });
 
+  it('JSON.parse 失敗時は legacy fallback に戻す', async () => {
+    const scaf = await setupHandlerTest();
+    const bridge = textBridge('this is not json');
+
+    try {
+      const result = await runAgentLoop({
+        bridge,
+        systemPrompt: 'system',
+        toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
+        handlerContext: scaf.ctx,
+        userMessage: '予約見せて',
+        logger: pino({ level: 'silent' }),
+      });
+
+      expect(result).toMatchObject({
+        fallbackToLegacy: true,
+        fallbackReason: 'invalid_json',
+        reply: '',
+        trace: [],
+      });
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
+  it('reply 欠落の invalid shape は legacy fallback に戻す', async () => {
+    const scaf = await setupHandlerTest();
+    const bridge = textBridge('{"foo":"bar"}');
+
+    try {
+      const result = await runAgentLoop({
+        bridge,
+        systemPrompt: 'system',
+        toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
+        handlerContext: scaf.ctx,
+        userMessage: '予約見せて',
+        logger: pino({ level: 'silent' }),
+      });
+
+      expect(result).toMatchObject({
+        fallbackToLegacy: true,
+        fallbackReason: 'invalid_shape',
+        reply: '',
+        trace: [],
+      });
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
+  it('valid JSON / tool_call=null は通常 reply を返す', async () => {
+    const scaf = await setupHandlerTest();
+    const bridge = textBridge('{"reply":"予約はありません。","tool_call":null,"needs_confirmation":false}');
+
+    try {
+      const result = await runAgentLoop({
+        bridge,
+        systemPrompt: 'system',
+        toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
+        handlerContext: scaf.ctx,
+        userMessage: '予約見せて',
+        logger: pino({ level: 'silent' }),
+      });
+
+      expect(result).toEqual({ reply: '予約はありません。', trace: [] });
+    } finally {
+      await scaf.cleanup();
+    }
+  });
+
   it('destructive tool: 承認前は handler を実行せず awaitingApproval を返す', async () => {
     const scaf = await setupHandlerTest();
     const handler = vi.fn(async () => ({ content: '🛑 6 件取り消しました', tag: 'cancel' }));
@@ -263,13 +336,17 @@ function toolSpec(input: {
 }
 
 function jsonBridge(payload: Record<string, unknown>): LlmProvider & { calls: LlmCallOptions[] } {
+  return textBridge(JSON.stringify(payload));
+}
+
+function textBridge(text: string): LlmProvider & { calls: LlmCallOptions[] } {
   const calls: LlmCallOptions[] = [];
   return {
     calls,
     async call(opts) {
       calls.push(opts);
       return {
-        text: JSON.stringify(payload),
+        text,
         usage: { input: 0, output: 0 },
       };
     },

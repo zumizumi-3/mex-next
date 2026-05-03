@@ -92,9 +92,12 @@ describe('IntentDrivenRunner agent loop', () => {
 
       expect(first.output).toContain('計 6 件を取り消します');
       expect(first.metadata?.awaitingConfirmation).toBe(true);
-      expect(pendingConfirmations.get('conv_1')?.pendingTool).toEqual({
-        name: 'cancel_publish_items',
-        input: { scope: 'all' },
+      expect(pendingConfirmations.get('conv_1')).toMatchObject({
+        kind: 'tool',
+        pendingTool: {
+          name: 'cancel_publish_items',
+          input: { scope: 'all' },
+        },
       });
 
       const second = await runner.run({

@@ -1,10 +1,9 @@
 /**
- * Natural-language intent router.
+ * Legacy intent router.
  *
- * Customers should not need to remember the `/mex` slash command surface.
- * This module converts a free-form Discord message ("予約見せて",
- * "@tanaka_san を追加", "今日いらない") into a structured intent that
- * the dispatcher can hand off to the existing slash-command handlers.
+ * Used as a fallback when the agent loop returns `fallbackToLegacy=true`.
+ * New conversations should not depend on this — see
+ * `src/llm/agent-loop.ts` for the primary path.
  *
  * The router is intentionally pure:
  * - `classifyIntent` returns a JSON-friendly `IntentResult`. It never

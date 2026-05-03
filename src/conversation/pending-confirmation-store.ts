@@ -24,19 +24,31 @@ import type { IntentName } from './intent-router.js';
 
 export const DEFAULT_PENDING_TTL_MS = 5 * 60 * 1000;
 
-export interface PendingConfirmation {
+interface PendingConfirmationBase {
   readonly conversationKey: string;
-  readonly intent?: IntentName;
-  readonly args?: Record<string, unknown>;
-  readonly pendingTool?: { readonly name: string; readonly input: Record<string, unknown> };
   readonly createdAt: number;
   readonly expiresAt: number;
   /** The exact prompt the bot showed — useful for the audit trail. */
   readonly promptShown: string;
 }
 
+export type PendingConfirmation =
+  | (PendingConfirmationBase & {
+      readonly kind: 'legacy';
+      readonly intent: IntentName;
+      readonly args: Record<string, unknown>;
+    })
+  | (PendingConfirmationBase & {
+      readonly kind: 'tool';
+      readonly pendingTool: { readonly name: string; readonly input: Record<string, unknown> };
+    });
+
+export type PendingConfirmationInput =
+  | Omit<Extract<PendingConfirmation, { kind: 'legacy' }>, 'createdAt' | 'expiresAt'>
+  | Omit<Extract<PendingConfirmation, { kind: 'tool' }>, 'createdAt' | 'expiresAt'>;
+
 export interface PendingConfirmationStore {
-  set(entry: Omit<PendingConfirmation, 'createdAt' | 'expiresAt'>): PendingConfirmation;
+  set(entry: PendingConfirmationInput): PendingConfirmation;
   /** Returns null when the entry is missing or expired (and removes it). */
   get(conversationKey: string): PendingConfirmation | null;
   delete(conversationKey: string): void;
@@ -52,6 +64,7 @@ export function createPendingConfirmationStore(opts: {
 
   return {
     set(entry) {
+      assertValidPendingConfirmation(entry);
       const created = now();
       const stored: PendingConfirmation = {
         ...entry,
@@ -74,6 +87,36 @@ export function createPendingConfirmationStore(opts: {
       map.delete(conversationKey);
     },
   };
+}
+
+function assertValidPendingConfirmation(entry: PendingConfirmationInput): void {
+  const rec = entry as Record<string, unknown>;
+  const hasLegacyFields = 'intent' in rec || 'args' in rec;
+  const hasToolFields = 'pendingTool' in rec;
+
+  if (entry.kind === 'legacy') {
+    if (hasToolFields || typeof rec.intent !== 'string' || !isRecord(rec.args)) {
+      throw new Error('invalid pending confirmation: expected legacy intent/args only');
+    }
+    return;
+  }
+
+  if (entry.kind === 'tool') {
+    const pendingTool = rec.pendingTool;
+    if (hasLegacyFields || !isRecord(pendingTool)) {
+      throw new Error('invalid pending confirmation: expected pendingTool only');
+    }
+    if (typeof pendingTool.name !== 'string' || !isRecord(pendingTool.input)) {
+      throw new Error('invalid pending confirmation: malformed pendingTool');
+    }
+    return;
+  }
+
+  throw new Error('invalid pending confirmation: unknown kind');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** Affirmative replies that count as "execute the pending intent". */

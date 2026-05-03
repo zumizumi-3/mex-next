@@ -1,3 +1,10 @@
+/**
+ * Primary conversation path: one-shot structured output from the LLM.
+ * The prompt includes a read-only state snapshot so list/status requests do not need tools.
+ * Destructive tool calls pause through pending approval before execution.
+ * Malformed or unsupported model output falls back to the legacy intent router.
+ */
+
 import type { Logger } from 'pino';
 import type { HandlerContext } from '../handlers/types.js';
 import type { ToolSpec } from '../handlers/tool-specs.js';
@@ -59,7 +66,7 @@ export interface AgentLoopResult {
   trace: Array<{ tool: string; input: unknown; outputSummary: string }>;
   /** Fallback for defensive coverage gaps, e.g. model requested an unknown tool. */
   fallbackToLegacy?: boolean;
-  fallbackReason?: 'unknown_tool';
+  fallbackReason?: 'unknown_tool' | 'invalid_json' | 'invalid_shape';
 }
 
 interface AgentStructuredResponse {
@@ -84,7 +91,47 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     throw new Error('agent loop aborted after LLM call');
   }
 
-  const parsed = JSON.parse(response.text) as AgentStructuredResponse;
+  let parsed: AgentStructuredResponse;
+  try {
+    parsed = JSON.parse(response.text) as AgentStructuredResponse;
+  } catch (err) {
+    opts.logger.warn(
+      {
+        error: err instanceof Error ? err.message : String(err),
+        preview: response.text.slice(0, 200),
+      },
+      'agent_loop_json_parse_failed',
+    );
+    return {
+      reply: '',
+      trace: [],
+      fallbackToLegacy: true,
+      fallbackReason: 'invalid_json',
+    };
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || typeof parsed.reply !== 'string') {
+    opts.logger.warn({ shape: typeof parsed }, 'agent_loop_invalid_shape');
+    return {
+      reply: '',
+      trace: [],
+      fallbackToLegacy: true,
+      fallbackReason: 'invalid_shape',
+    };
+  }
+
+  if (parsed.tool_call !== null && parsed.tool_call !== undefined) {
+    if (typeof parsed.tool_call !== 'object' || typeof parsed.tool_call.name !== 'string') {
+      opts.logger.warn({ toolCallShape: typeof parsed.tool_call }, 'agent_loop_invalid_shape');
+      return {
+        reply: parsed.reply || '',
+        trace: [],
+        fallbackToLegacy: true,
+        fallbackReason: 'invalid_shape',
+      };
+    }
+  }
+
   const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
     ? parsed.reply.trim()
     : 'すみません、うまく返答を作れませんでした。';

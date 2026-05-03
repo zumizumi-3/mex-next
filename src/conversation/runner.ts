@@ -140,34 +140,42 @@ export class IntentDrivenRunner implements ConversationRunner {
       const verdict = classifyConfirmationReply(userText);
       if (verdict === 'affirmative') {
         this.pendingConfirmations.delete(input.conversationKey);
-        if (pending.pendingTool && this.agentLoop) {
-          return this.runAgentLoopAndDispatch({
-            userText,
-            turnHandlerContext,
-            abortSignal,
-            onStatus,
-            conversationKey: input.conversationKey,
-            pendingApproval: {
-              toolName: pending.pendingTool.name,
-              toolInput: pending.pendingTool.input,
-            },
-          });
+        switch (pending.kind) {
+          case 'tool':
+            if (!this.agentLoop) {
+              return { output: '内部エラー: pending confirmation が壊れています。' };
+            }
+            return this.runAgentLoopAndDispatch({
+              userText,
+              turnHandlerContext,
+              abortSignal,
+              onStatus,
+              conversationKey: input.conversationKey,
+              pendingApproval: {
+                toolName: pending.pendingTool.name,
+                toolInput: pending.pendingTool.input,
+              },
+            });
+          case 'legacy': {
+            const resolved: IntentResult = {
+              intent: pending.intent,
+              args: pending.args,
+              confirmationNeeded: false,
+            };
+            return this.dispatch(resolved, onStatus, turnHandlerContext);
+          }
         }
-        if (!pending.intent) {
-          return { output: '内部エラー: pending confirmation が壊れています。' };
-        }
-        const resolved: IntentResult = {
-          intent: pending.intent,
-          args: pending.args ?? {},
-          confirmationNeeded: false,
-        };
-        return this.dispatch(resolved, onStatus, turnHandlerContext);
       }
       if (verdict === 'negative') {
         this.pendingConfirmations.delete(input.conversationKey);
         return {
           output: `${STATE_EMOJI.cancelled} キャンセルしました。`,
-          metadata: { intent: pending.intent, cancelledByConfirmation: true },
+          metadata: {
+            ...(pending.kind === 'legacy'
+              ? { intent: pending.intent }
+              : { pendingTool: pending.pendingTool.name }),
+            cancelledByConfirmation: true,
+          },
         };
       }
       // ambiguous: fall through to the classifier. Drop the pending
@@ -293,6 +301,7 @@ export class IntentDrivenRunner implements ConversationRunner {
     if (result.awaitingApproval) {
       this.pendingConfirmations.set({
         conversationKey: input.conversationKey,
+        kind: 'tool',
         pendingTool: {
           name: result.awaitingApproval.toolName,
           input: result.awaitingApproval.toolInput,
@@ -318,7 +327,7 @@ export class IntentDrivenRunner implements ConversationRunner {
 
   private emitAgentLoopFallback(
     ctx: HandlerContext,
-    payload: { reason: 'unknown_tool' | 'exception'; detail?: string },
+    payload: { reason: AgentLoopResult['fallbackReason'] | 'exception'; detail?: string },
   ): void {
     void ctx.judgmentEvents
       ?.emit({
@@ -373,6 +382,7 @@ export class IntentDrivenRunner implements ConversationRunner {
       // Park the pending intent so a follow-up "はい" actually runs it.
       this.pendingConfirmations.set({
         conversationKey: runnerInput?.conversationKey ?? accountId,
+        kind: 'legacy',
         intent: intent.intent,
         args: intent.args ?? {},
         promptShown: promptText,
