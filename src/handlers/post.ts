@@ -37,6 +37,7 @@ export async function handlePostCreate(
     repo: asPostingMachineRepo(ctx.repo),
     bridge: adaptedBridge,
     logger: ctx.logger,
+    ...(ctx.xApi ? { xApi: ctx.xApi } : {}),
     ...(ctx.exemplarWriter ? { exemplarWriter: ctx.exemplarWriter } : {}),
   });
 

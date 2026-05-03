@@ -40,6 +40,10 @@ export interface AgentStateSnapshot {
     account_id: string;
     display_name: string;
   };
+  news: {
+    trends: Array<{ name: string; volume?: number }>;
+    articles: Array<{ title: string; url: string; source: string }>;
+  };
 }
 
 export interface AgentLoopOptions {

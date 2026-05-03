@@ -107,6 +107,7 @@ function makeXApi(postFn?: (text: string) => Promise<PostResult>): XApiSurface {
     searchRecent: vi.fn(async () => []),
     getUserTweets: vi.fn(async () => []),
     getUserByHandle: vi.fn(async () => ({ id: 'u', name: 'n', handle: 'h' })),
+    getTrends: vi.fn(async () => []),
     deleteTweet: vi.fn(async () => undefined),
     likeTweet: vi.fn(async () => undefined),
   };

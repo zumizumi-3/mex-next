@@ -40,6 +40,7 @@ import {
   handlePhaseQuestionnaireSubmit,
 } from './phase.js';
 import { handleSystemRegenerateKnowledge, handleSystemUpdate } from './system.js';
+import { handleNewsShow } from './news.js';
 import type { Handler, HandlersMap } from './types.js';
 
 export type { HandlerContext, HandlerResult, HandlerArgs, Handler, HandlersMap } from './types.js';
@@ -70,6 +71,7 @@ export {
   handlePhaseQuestionnaireSubmit,
   handleSystemRegenerateKnowledge,
   handleSystemUpdate,
+  handleNewsShow,
 };
 
 /**
@@ -106,6 +108,7 @@ export function buildHandlers(): HandlersMap {
     'phase.questionnaire_submit': handlePhaseQuestionnaireSubmit,
     'system.update': handleSystemUpdate,
     'system.regenerate_knowledge': handleSystemRegenerateKnowledge,
+    'news.show': handleNewsShow,
     unknown: handleUnknown,
   };
   return map;

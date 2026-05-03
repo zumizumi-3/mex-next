@@ -112,6 +112,7 @@ export interface AccountJson {
   };
   brand?: BrandFields;
   goal_stack?: GoalStack;
+  news_sources?: string[];
   half_focus?: HalfFocus;
   client_mandate?: ClientMandate;
   active_window?: ActiveWindow;

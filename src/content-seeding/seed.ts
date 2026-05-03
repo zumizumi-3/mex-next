@@ -24,6 +24,7 @@ import type { LlmProvider as PostingLlmProvider } from '../posting/types.js';
 import type { Logger } from 'pino';
 import { PostingStateMachine, type PostingSession } from '../posting/state-machine.js';
 import { asPostingMachineRepo } from '../handlers/repo-adapter.js';
+import type { XApiSurface } from '../x-api/types.js';
 
 export const DEFAULT_SEED_COUNT = 7;
 export const MIN_SEED_COUNT = 1;
@@ -85,6 +86,7 @@ export interface RunSeedOptions {
   bridge: LlmProvider;
   request: SeedRequest;
   logger?: Logger;
+  xApi?: XApiSurface;
 }
 
 function clampCount(count: number | undefined): number {
@@ -358,6 +360,7 @@ export async function runSeed(opts: RunSeedOptions): Promise<SeedResult> {
     repo: asPostingMachineRepo(opts.repo),
     bridge: adaptBridgeForMachine(opts.bridge),
     ...(opts.logger ? { logger: opts.logger } : {}),
+    ...(opts.xApi ? { xApi: opts.xApi } : {}),
   });
 
   const generated: SeedGeneratedItem[] = [];

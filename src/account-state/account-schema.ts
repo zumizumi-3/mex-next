@@ -260,6 +260,9 @@ export const AccountJsonSchema = z
     brand: z.unknown().default({}),
     goal_stack: z.unknown().default({}),
     active_window: z.unknown().default({}),
+    news_sources: z
+      .array(z.string().url())
+      .default(['https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=10']),
     operating_cadence: OperatingCadenceSchema.default({} as never),
     x_action_system: XActionSystemSchema.default({} as never),
     engagement_policy: EngagementPolicySchema.default({} as never),

@@ -80,6 +80,9 @@ export async function setupHandlerTest(opts?: {
     async getUserByHandle(handle) {
       return { id: 'user_1', name: 'test', handle };
     },
+    async getTrends() {
+      return [];
+    },
     async deleteTweet() {
       return undefined;
     },

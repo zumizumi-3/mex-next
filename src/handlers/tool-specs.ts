@@ -8,6 +8,7 @@ import {
   handlePhaseQuestionnaireStart,
   handlePostCreate,
   handleQueueSummary,
+  handleNewsShow,
   handleScheduleCancel,
   handleSchedulePublishNow,
   handleSeedRun,
@@ -81,6 +82,7 @@ export const TOOL_NAMES = [
   'run_training',
   'start_phase_questionnaire',
   'run_system_update',
+  'show_news_context',
   'regenerate_knowledge',
 ] as const;
 
@@ -353,6 +355,15 @@ export const TOOL_SPECS: ToolSpec[] = [
     operatorOnly: true,
     buildHandlerArgs: emptyArgs,
     handler: handleSystemUpdate,
+  },
+  {
+    name: 'show_news_context',
+    description:
+      '今日参考にしているニュース一覧と X トレンドを返す。「ニュース見せて」「今日のトレンド」と言ったら呼ぶ。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: false,
+    buildHandlerArgs: emptyArgs,
+    handler: handleNewsShow,
   },
   {
     name: 'regenerate_knowledge',
