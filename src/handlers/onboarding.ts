@@ -66,9 +66,13 @@ export async function handleOnboardStart(
     '',
     '_この thread にそのまま自然文で返してください。途中でやめたい時は「やめる」と書いてください。_',
   ];
+  // review 質問なら「維持 / 変更する / やめる」、通常質問なら「やめる」のみ。
+  const components = pendingReviewForQuestion(session, question.id)
+    ? onboardingReviewComponents(session.id)
+    : onboardingCancelComponents(session.id);
   return {
     content: lines.join('\n'),
-    components: onboardingCancelComponents(session.id),
+    components,
     tag: 'onboard.start',
   };
 }
