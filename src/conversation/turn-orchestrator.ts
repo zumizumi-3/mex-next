@@ -35,6 +35,11 @@ export interface TurnResult {
 /** Status callback signature used to feed the progress indicator. */
 export type StatusCallback = (status: string) => void | Promise<void>;
 
+export interface ConversationTranscriptTurn {
+  readonly role: 'user' | 'assistant';
+  readonly content: string;
+}
+
 /**
  * The conversation engine's only point of contact with the LLM.
  * WO-FRESH-3 supplies the implementation; this module just calls it.
@@ -45,6 +50,7 @@ export interface ConversationRunner {
     readonly accountId: string;
     readonly turnId: string;
     readonly message: TurnMessage;
+    readonly transcript?: ReadonlyArray<ConversationTranscriptTurn>;
     readonly abortSignal: AbortSignal;
     readonly onStatus?: StatusCallback;
   }): Promise<TurnResult>;
@@ -55,6 +61,7 @@ export interface RunConversationTurnInput {
   readonly conversationKey: string;
   readonly replyChannelId: string;
   readonly message: TurnMessage;
+  readonly transcript?: ReadonlyArray<ConversationTranscriptTurn>;
   readonly runner: ConversationRunner;
   readonly pendingTurnStore?: PendingTurnStore;
   readonly logger?: Logger;
@@ -131,6 +138,7 @@ export async function runConversationTurn(
       accountId: input.accountId,
       turnId,
       message,
+      ...(input.transcript ? { transcript: input.transcript } : {}),
       abortSignal: abortController.signal,
       onStatus: input.onStatus,
     });
@@ -152,10 +160,7 @@ export async function runConversationTurn(
       clearPending();
       throw cancelError;
     }
-    log?.error(
-      { conversationKey: input.conversationKey, error: errMsg(error) },
-      'turn_failed',
-    );
+    log?.error({ conversationKey: input.conversationKey, error: errMsg(error) }, 'turn_failed');
     unregisterTurn(turnId, { status: 'failed' });
     clearPending();
     throw error;

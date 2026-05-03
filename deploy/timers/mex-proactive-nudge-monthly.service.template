@@ -1,0 +1,8 @@
+[Unit]
+Description=MeX Next monthly proactive nudge ({ACCOUNT_ID})
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/mex/{ACCOUNT_ID}.env
+WorkingDirectory=/opt/mex-next
+ExecStart=/usr/bin/doppler run --project xops-{ACCOUNT_ID} --config prd -- /usr/bin/node /opt/mex-next/dist/scripts/cron-proactive-nudge.js --account-id {ACCOUNT_ID} --kind monthly_phase_review

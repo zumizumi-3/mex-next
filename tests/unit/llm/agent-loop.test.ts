@@ -238,9 +238,9 @@ describe('runAgentLoop', () => {
     }
   });
 
-  it('TOOL_SPECS の tool 名を 16 件に固定する', () => {
+  it('TOOL_SPECS の tool 名を 17 件に固定する', () => {
     expect(TOOL_SPECS.map((s) => s.name)).toEqual([...TOOL_NAMES]);
-    expect(TOOL_SPECS).toHaveLength(16);
+    expect(TOOL_SPECS).toHaveLength(17);
   });
 
   it('system prompt が 1-shot / read-only snapshot / 件数明示を誘導する', () => {

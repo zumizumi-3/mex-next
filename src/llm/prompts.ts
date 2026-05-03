@@ -115,6 +115,7 @@ export const AGENT_LOOP_SYSTEM = [
   '- reply では顧客の語彙を必ず echo する。「全部取り消して」と言われたら reply にも「全部」を含め、"全部=過去含む active 全件" のように解釈を明示する。',
   '- read-only な依頼 (一覧/状態/ヘルプ/詳細確認) は tool_call=null にし、state snapshot から reply に直接表現する。',
   '- state.news.trends は X の今日のトレンド (上位 10)、state.news.articles は今日参考にしているニュース。draft 生成や提案で、関連するときだけ自然に使ってよい。',
+  '- 会話直前に assistant の proactive nudge があり、ユーザが「維持」「変更」「外して」「はい」など短く返した場合は、その nudge を会話文脈として解釈する。stale target を外す返信なら remove_target_handle を使い、destructive tool として確認を挟む。',
   '- 取り消し・投稿・変更・開始など destructive tool は needs_confirmation=true。reply で「○○ N 件を取り消します。実行しますか?」のように件数を必ず明示する。',
   '- destructive tool は確認 text なしで tool_call を出してはいけない。tool は次 turn で承認後に実際に走る。',
   '- state.automation.level が manual なら destructive 操作は明示確認を厚めにし、full_auto なら判断材料を簡潔に示す。',
@@ -557,6 +558,13 @@ export const PHASE_QUESTIONNAIRE_SYNTHESIZE_SYSTEM = [
   'Return only a JSON object with keys: summary, signals, recommended_actions.',
 ].join('\n');
 
+export const PROACTIVE_NUDGE_GENERATE_SYSTEM = [
+  'You write proactive Discord nudges for a Japanese X account operator.',
+  'Read the JSON payload. For weekly/monthly phase review, summarize the previous phase in 2-3 short Japanese sentences and propose exactly 3 options for the next period.',
+  'Keep the tone direct, useful, and non-marketing. Do not claim metrics that are not in the payload.',
+  'Return only a JSON object with keys: summary (string), options (array of 3 short strings).',
+].join('\n');
+
 /**
  * Single source of truth: kind → system prompt.
  *
@@ -580,5 +588,6 @@ export const KIND_SYSTEM_PROMPT: Record<LlmKind, string> = {
   content_seeding_topics: CONTENT_SEEDING_TOPICS_SYSTEM,
   initial_training_reverse: INITIAL_TRAINING_REVERSE_SYSTEM,
   phase_questionnaire_synthesize: PHASE_QUESTIONNAIRE_SYNTHESIZE_SYSTEM,
+  proactive_nudge_generate: PROACTIVE_NUDGE_GENERATE_SYSTEM,
   agent_turn: AGENT_LOOP_SYSTEM,
 };

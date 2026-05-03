@@ -539,7 +539,7 @@ async function writeTargetSession(
       ? { ...(current as Record<string, TargetDiscoverySession>) }
       : {};
   map[session.event_id] = session;
-  await repo.writeState({ ...stateRecord, [TARGET_SESSION_KEY]: map });
+  await repo.writeState({ ...stateRecord, [TARGET_SESSION_KEY]: map } as never);
 }
 
 function repoAsCollectorRepo(repo: AccountRepo) {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for MeX Next monthly proactive nudge ({ACCOUNT_ID})
+
+[Timer]
+OnCalendar=*-*-01 07:30:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=mex-proactive-nudge-monthly-{ACCOUNT_ID}.service
+
+[Install]
+WantedBy=timers.target

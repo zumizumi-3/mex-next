@@ -17,6 +17,7 @@
 
 import { classifyIntent, type IntentResult } from './intent-router.js';
 import {
+  type ConversationTranscriptTurn,
   type ConversationRunner,
   type StatusCallback,
   type TurnResult,
@@ -109,6 +110,7 @@ export class IntentDrivenRunner implements ConversationRunner {
     readonly accountId: string;
     readonly turnId: string;
     readonly message: TurnMessage;
+    readonly transcript?: ReadonlyArray<ConversationTranscriptTurn>;
     readonly abortSignal: AbortSignal;
     readonly onStatus?: StatusCallback;
   }): Promise<TurnResult> {
@@ -151,6 +153,7 @@ export class IntentDrivenRunner implements ConversationRunner {
               abortSignal,
               onStatus,
               conversationKey: input.conversationKey,
+              transcript: input.transcript,
               pendingApproval: {
                 toolName: pending.pendingTool.name,
                 toolInput: pending.pendingTool.input,
@@ -225,6 +228,7 @@ export class IntentDrivenRunner implements ConversationRunner {
         abortSignal,
         onStatus,
         conversationKey: input.conversationKey,
+        transcript: input.transcript,
       });
     }
 
@@ -237,6 +241,7 @@ export class IntentDrivenRunner implements ConversationRunner {
     abortSignal: AbortSignal;
     onStatus?: StatusCallback;
     conversationKey: string;
+    transcript?: ReadonlyArray<ConversationTranscriptTurn>;
     pendingApproval?: { toolName: string; toolInput: Record<string, unknown> };
   }): Promise<TurnResult> {
     if (!this.agentLoop) {
@@ -261,6 +266,7 @@ export class IntentDrivenRunner implements ConversationRunner {
         stateSnapshot,
         handlerContext: input.turnHandlerContext,
         userMessage: input.userText,
+        ...(input.transcript ? { transcript: [...input.transcript] } : {}),
         pendingApproval: input.pendingApproval,
         abortSignal: input.abortSignal,
         logger: input.turnHandlerContext.logger,
