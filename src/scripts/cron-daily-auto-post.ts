@@ -141,6 +141,7 @@ export async function runDailyAutoPost(deps: DailyAutoPostDeps): Promise<DailyAu
       poster,
       logger,
     });
+    await notifyCustomerGenerationIssue({ poster, logger });
     return { kind: 'fail', reason };
   }
 
@@ -156,6 +157,7 @@ export async function runDailyAutoPost(deps: DailyAutoPostDeps): Promise<DailyAu
       poster,
       logger,
     });
+    await notifyCustomerGenerationIssue({ poster, logger });
     return { kind: 'fail', sessionId: session.id, reason };
   }
 
@@ -169,6 +171,7 @@ export async function runDailyAutoPost(deps: DailyAutoPostDeps): Promise<DailyAu
       poster,
       logger,
     });
+    await notifyCustomerGenerationIssue({ poster, logger });
     return { kind: 'fail', sessionId: session.id, reason };
   }
 
@@ -195,6 +198,7 @@ export async function runDailyAutoPost(deps: DailyAutoPostDeps): Promise<DailyAu
       poster,
       logger,
     });
+    await notifyCustomerGenerationIssue({ poster, logger });
     return { kind: 'fail', sessionId: session.id, reason };
   }
 
@@ -226,6 +230,24 @@ function renderDraftThread(args: { sessionId: string; text: string; topic: strin
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+async function notifyCustomerGenerationIssue(args: {
+  poster: DiscordPosterImpl;
+  logger: Logger;
+}): Promise<void> {
+  try {
+    await args.poster.postMessage({
+      channelRole: 'customer_attention',
+      content: '📝 本日の投稿候補の生成中に問題が発生しました。operator が確認しています',
+      silent: false,
+    });
+  } catch (error) {
+    args.logger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'daily_auto_post.customer_notification_failed',
+    );
+  }
 }
 
 interface EscalateInput {

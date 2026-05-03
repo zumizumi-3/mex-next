@@ -53,23 +53,28 @@ interface QuoteSession {
   event_id: string;
   source_tweet_id: string;
   quoter_author_id: string;
-  status: 'open' | 'posted' | 'discord_pending' | 'error';
+  status: 'open' | 'posted' | 'discord_pending' | 'operator_escalated' | 'error';
   reason: string;
   draft_mode: 'reply' | 'quote';
   draft_text: string;
   created_at: string;
   thread_id?: string;
   message_id?: string;
+  last_discord_post_attempt_at?: string;
+  discord_post_attempt_count?: number;
 }
 
 /** Statuses that block re-processing of the same event_id. */
 const TERMINAL_QUOTE_STATUSES: ReadonlySet<QuoteSession['status']> = new Set([
   'posted',
+  'operator_escalated',
   'error',
 ]);
 
 const STATE_KEY = 'inbound_reaction_sessions';
 const DEFAULT_MAX_FETCH = 30;
+const DISCORD_RETRY_INTERVAL_MS = 30 * 60 * 1000;
+const MAX_DISCORD_POST_ATTEMPTS = 3;
 
 export async function collectInboundQuotes(
   opts: CollectInboundQuotesOptions,
@@ -131,6 +136,12 @@ export async function collectInboundQuotes(
       // already settled — never reprocess
       continue;
     }
+    if (prior && prior.status === 'discord_pending' && !canAttemptDiscordPost(prior, now())) {
+      if (compareIds(tweet.id, highestId) > 0) {
+        highestId = tweet.id;
+      }
+      continue;
+    }
 
     const session: QuoteSession = prior
       ? { ...prior, status: 'open' }
@@ -189,8 +200,16 @@ export async function collectInboundQuotes(
       posted += 1;
     } catch (error: unknown) {
       // Discord post failed — retry on the next collector run.
-      session.status = 'discord_pending';
+      markDiscordPostFailed(session, now());
       session.reason = `${session.reason} | post failed: ${describeError(error)}`;
+      if ((session.discord_post_attempt_count ?? 0) >= MAX_DISCORD_POST_ATTEMPTS) {
+        session.status = 'operator_escalated';
+        await escalateDiscordPostFailure({
+          discordPoster,
+          eventId: tweet.id,
+          reason: describeError(error),
+        });
+      }
       errors += 1;
     }
 
@@ -298,6 +317,41 @@ function compareIds(a: string, b: string): number {
 function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function canAttemptDiscordPost(session: QuoteSession, nowIso: string): boolean {
+  const last = session.last_discord_post_attempt_at;
+  if (!last) return true;
+  const lastMs = Date.parse(last);
+  const nowMs = Date.parse(nowIso);
+  if (!Number.isFinite(lastMs) || !Number.isFinite(nowMs)) return true;
+  return nowMs - lastMs >= DISCORD_RETRY_INTERVAL_MS;
+}
+
+function markDiscordPostFailed(session: QuoteSession, nowIso: string): void {
+  session.status = 'discord_pending';
+  session.last_discord_post_attempt_at = nowIso;
+  session.discord_post_attempt_count = (session.discord_post_attempt_count ?? 0) + 1;
+}
+
+async function escalateDiscordPostFailure(args: {
+  discordPoster: DiscordPoster;
+  eventId: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    await args.discordPoster.postEscalation({
+      channelRole: 'operator',
+      content: [
+        '⚠️ Discord notification failed repeatedly (inbound_quote)',
+        `event_id: \`${args.eventId}\``,
+        `reason: ${args.reason}`,
+      ].join('\n'),
+      metadata: { kind: 'inbound_quote.discord_post_failed', event_id: args.eventId },
+    });
+  } catch {
+    // The session is terminal; keep collection moving even if escalation fails.
+  }
 }
 
 function defaultNow(): string {

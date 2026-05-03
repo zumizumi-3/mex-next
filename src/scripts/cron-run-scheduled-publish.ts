@@ -27,6 +27,9 @@ import { createDiscordClient } from '../discord/client.js';
 import { DiscordPosterImpl } from '../discord/poster.js';
 import { escalateOperator } from '../automation/operator-escalation.js';
 import type { JudgmentEventStream } from '../observability/judgment-events.js';
+import { toJstView } from '../utils/jst.js';
+
+const publishedNotificationMemo = new Set<string>();
 
 export interface ScheduledPublishDeps {
   readonly config: AppConfig;
@@ -84,6 +87,11 @@ export async function runScheduledPublish(
         logger,
         judgmentEvents,
         originalKind: 'publish_stale',
+      });
+      await notifyCustomer({
+        poster,
+        logger,
+        content: `⌛ 予約 \`${s.publish_id}\` (${formatScheduledTime(s.scheduled_at)}) は予定時刻から 24h 経過したため自動キャンセルしました`,
       });
     }
   }
@@ -159,6 +167,7 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
         judgmentEvents,
         originalKind: 'publish_draft_missing',
       });
+      await notifyCustomerPublishFailed({ poster, logger, reason });
       return {
         publishId: item.publish_id,
         contentId: item.content_id,
@@ -197,6 +206,7 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
       judgmentEvents,
       originalKind: 'publish_draft_missing',
     });
+    await notifyCustomerPublishFailed({ poster, logger, reason });
     return {
       publishId: item.publish_id,
       contentId: item.content_id,
@@ -213,6 +223,7 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
       tweetId: result.id,
       now: input.now(),
     });
+    await notifyCustomerPublished({ poster, logger, publishId: item.publish_id, tweetId: result.id });
     logger.info(
       { publishId: item.publish_id, contentId: item.content_id, tweetId: result.id },
       'scheduled_publish.published',
@@ -246,6 +257,7 @@ async function publishOne(input: PublishOneInput): Promise<ScheduledPublishItemO
       judgmentEvents,
       originalKind: 'publish_x_api_failed',
     });
+    await notifyCustomerPublishFailed({ poster, logger, reason });
     return {
       publishId: item.publish_id,
       contentId: item.content_id,
@@ -322,6 +334,61 @@ async function emitJudgmentEvent(
       'scheduled_publish.judgment_event_emit_failed',
     );
   }
+}
+
+async function notifyCustomerPublished(args: {
+  poster: DiscordPosterImpl;
+  logger: Logger;
+  publishId: string;
+  tweetId: string;
+}): Promise<void> {
+  if (publishedNotificationMemo.has(args.publishId)) return;
+  publishedNotificationMemo.add(args.publishId);
+  await notifyCustomer({
+    poster: args.poster,
+    logger: args.logger,
+    content: `✅ 投稿しました: https://x.com/i/web/status/${args.tweetId}`,
+  });
+}
+
+async function notifyCustomerPublishFailed(args: {
+  poster: DiscordPosterImpl;
+  logger: Logger;
+  reason: string;
+}): Promise<void> {
+  await notifyCustomer({
+    poster: args.poster,
+    logger: args.logger,
+    content: `⚠️ 投稿に失敗しました: ${args.reason}`,
+  });
+}
+
+async function notifyCustomer(args: {
+  poster: DiscordPosterImpl;
+  logger: Logger;
+  content: string;
+}): Promise<void> {
+  try {
+    await args.poster.postMessage({
+      channelRole: 'customer_thread',
+      content: args.content,
+      silent: false,
+    });
+  } catch (error) {
+    args.logger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'scheduled_publish.customer_notification_failed',
+    );
+  }
+}
+
+function formatScheduledTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const jst = toJstView(date);
+  const hh = String(jst.getUTCHours()).padStart(2, '0');
+  const mm = String(jst.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
 
 function buildXApiOrThrow(config: AppConfig): XApiClient {

@@ -167,6 +167,7 @@ export async function startPhaseQuestionnaire(
   opts.logger?.info({ sessionId: id, cadence: opts.cadence }, 'phase_questionnaire_start');
 
   let threadId: string | null = null;
+  let postError: string | null = null;
   try {
     const post = await opts.poster.postThread({
       channelRole: 'customer_attention',
@@ -176,24 +177,42 @@ export async function startPhaseQuestionnaire(
     });
     threadId = post.threadId;
   } catch (err) {
+    postError = err instanceof Error ? err.message : String(err);
     opts.logger?.warn(
-      { error: err instanceof Error ? err.message : String(err) },
+      { error: postError },
       'phase_questionnaire_post_failed',
     );
+    try {
+      await opts.poster.postEscalation({
+        channelRole: 'operator',
+        content: [
+          '⚠️ phase questionnaire start failed',
+          `session: \`${id}\``,
+          `cadence: ${opts.cadence}`,
+          `reason: ${postError}`,
+        ].join('\n'),
+        metadata: { kind: 'phase_questionnaire.start_failed', sessionId: id },
+      });
+    } catch (escErr) {
+      opts.logger?.warn(
+        { error: escErr instanceof Error ? escErr.message : String(escErr) },
+        'phase_questionnaire_start_escalation_failed',
+      );
+    }
   }
 
   const session: PhaseQuestionnaireSession = {
     id,
     cadence: opts.cadence,
-    status: 'awaiting_answers',
+    status: postError ? 'failed' : 'awaiting_answers',
     questions,
     answers: {},
     threadId,
     auto_chain_next: opts.autoChainNext ?? false,
     startedAt,
-    completedAt: null,
+    completedAt: postError ? nowIso() : null,
     synthesis: null,
-    lastError: null,
+    lastError: postError,
   };
 
   await opts.repo.withState(async (state) => {

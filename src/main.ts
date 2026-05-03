@@ -51,6 +51,8 @@ import { GracefulShutdown, bindShutdownSignals } from './lifecycle/graceful-shut
 import { runPeriodicRetro } from './scripts/cron-periodic-retro.js';
 import { startPhaseQuestionnaire } from './phase-questionnaire/runner.js';
 
+const LLM_CIRCUIT_CUSTOMER_NOTICE_INTERVAL_MS = 5 * 60 * 1000;
+
 async function buildLlmBridge(
   config: AppConfig,
   log: ReturnType<typeof createLogger>,
@@ -96,6 +98,7 @@ async function buildLlmBridge(
   } else {
     log.info('llm_bridge_mixed');
   }
+  let lastCustomerCircuitNoticeAt = 0;
   return createBridge({
     ...(anthropic ? { anthropic } : {}),
     ...(codex ? { codex } : {}),
@@ -111,6 +114,17 @@ async function buildLlmBridge(
     },
     onCircuitOpen: (err, ctx) => {
       log.error({ err: err.message, kind: ctx.kind }, 'llm_circuit_open');
+      const now = Date.now();
+      if (now - lastCustomerCircuitNoticeAt >= LLM_CIRCUIT_CUSTOMER_NOTICE_INTERVAL_MS) {
+        lastCustomerCircuitNoticeAt = now;
+        void discordPoster
+          .postMessage({
+            channelRole: 'customer_attention',
+            content: '⚠️ AI が一時的に利用できません。数分後にお試しください',
+            silent: false,
+          })
+          .catch(() => undefined);
+      }
       // Best-effort operator escalation. Failures are swallowed so the
       // surrounding code path keeps progressing.
       void discordPoster

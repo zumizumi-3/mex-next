@@ -40,6 +40,32 @@ describe('createPendingConfirmationStore', () => {
     expect(store.get('c1')).toBeNull();
   });
 
+  it('keeps recently expired entries available briefly for clearer replies', () => {
+    let now = 1_000;
+    const store = createPendingConfirmationStore({
+      ttlMs: 100,
+      recentlyExpiredTtlMs: 600,
+      now: () => now,
+    });
+    store.set({
+      conversationKey: 'c1',
+      kind: 'legacy',
+      intent: 'schedule.cancel',
+      args: {},
+      promptShown: 'really?',
+    });
+
+    now = 1_200;
+    expect(store.get('c1')).toBeNull();
+    expect(store.peekRecentlyExpired('c1')).toMatchObject({
+      kind: 'legacy',
+      intent: 'schedule.cancel',
+    });
+
+    now = 1_801;
+    expect(store.peekRecentlyExpired('c1')).toBeNull();
+  });
+
   it('replaces on second set for the same conversationKey', () => {
     const store = createPendingConfirmationStore();
     store.set({

@@ -58,6 +58,7 @@ describe('cron-proactive-nudge', () => {
   });
 
   it('runCronProactiveNudge は emitNudge 経由で対象 kind の投稿を行う', async () => {
+    let state: Record<string, unknown> = {};
     const repo = {
       loadAccount: vi.fn(async () => ({
         account_id: 'zumi-x',
@@ -65,7 +66,12 @@ describe('cron-proactive-nudge', () => {
           { cadence: 'weekly', summary: '先週の方針', updated_at: '2026-04-28T00:00:00Z' },
         ],
       })),
-      loadState: vi.fn(async () => ({})),
+      loadState: vi.fn(async () => state),
+      withStateLock: vi.fn(async (fn) => {
+        const result = await fn(state);
+        state = result.state;
+        return result.result;
+      }),
     } as unknown as AccountRepo;
     const bridge = {
       call: vi.fn(async () => ({

@@ -214,6 +214,7 @@ describe('collectInboundQuotes', () => {
       }),
       postEscalation: vi.fn(),
     } as unknown as DiscordPoster;
+    let now = '2026-05-03T00:00:00Z';
     await collectInboundQuotes({
       repo,
       xApi,
@@ -221,6 +222,7 @@ describe('collectInboundQuotes', () => {
       discordPoster: failingPoster,
       selfHandle: 'me',
       recentSelfTweetIds: ['s1'],
+      now: () => now,
     });
     expect(bridge.request).toHaveBeenCalledTimes(1);
     let sessions = repo.state['inbound_reaction_sessions'] as Record<
@@ -230,6 +232,7 @@ describe('collectInboundQuotes', () => {
     expect(sessions['810']?.status).toBe('discord_pending');
 
     // Recovery
+    now = '2026-05-03T00:31:00Z';
     const recoveryPoster = makePoster();
     const result = await collectInboundQuotes({
       repo,
@@ -238,6 +241,7 @@ describe('collectInboundQuotes', () => {
       discordPoster: recoveryPoster,
       selfHandle: 'me',
       recentSelfTweetIds: ['s1'],
+      now: () => now,
     });
     expect(result.posted).toBe(1);
     sessions = repo.state['inbound_reaction_sessions'] as Record<

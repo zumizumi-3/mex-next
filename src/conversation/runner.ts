@@ -185,6 +185,17 @@ export class IntentDrivenRunner implements ConversationRunner {
       // ambiguous: fall through to the classifier. Drop the pending
       // entry so we don't re-trigger on the next turn.
       this.pendingConfirmations.delete(input.conversationKey);
+    } else {
+      const verdict = classifyConfirmationReply(userText);
+      if (
+        verdict === 'affirmative' &&
+        this.pendingConfirmations.peekRecentlyExpired(input.conversationKey)
+      ) {
+        return {
+          output:
+            '「はい」を受けましたが、確認待ちのリクエストが見つかりませんでした。何をしたいか教えてください',
+        };
+      }
     }
 
     // Onboarding bypass: when an active onboarding session exists, take

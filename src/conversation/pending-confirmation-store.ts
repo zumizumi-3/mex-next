@@ -23,6 +23,7 @@
 import type { IntentName } from './intent-router.js';
 
 export const DEFAULT_PENDING_TTL_MS = 5 * 60 * 1000;
+export const DEFAULT_RECENTLY_EXPIRED_TTL_MS = 10 * 60 * 1000;
 
 interface PendingConfirmationBase {
   readonly conversationKey: string;
@@ -51,16 +52,21 @@ export interface PendingConfirmationStore {
   set(entry: PendingConfirmationInput): PendingConfirmation;
   /** Returns null when the entry is missing or expired (and removes it). */
   get(conversationKey: string): PendingConfirmation | null;
+  /** Returns an expired confirmation retained briefly for clearer "はい" replies. */
+  peekRecentlyExpired(conversationKey: string): PendingConfirmation | null;
   delete(conversationKey: string): void;
 }
 
 export function createPendingConfirmationStore(opts: {
   ttlMs?: number;
+  recentlyExpiredTtlMs?: number;
   now?: () => number;
 } = {}): PendingConfirmationStore {
   const ttl = opts.ttlMs ?? DEFAULT_PENDING_TTL_MS;
+  const recentlyExpiredTtl = opts.recentlyExpiredTtlMs ?? DEFAULT_RECENTLY_EXPIRED_TTL_MS;
   const now = opts.now ?? (() => Date.now());
   const map = new Map<string, PendingConfirmation>();
+  const recentlyExpired = new Map<string, PendingConfirmation>();
 
   return {
     set(entry) {
@@ -72,6 +78,7 @@ export function createPendingConfirmationStore(opts: {
         expiresAt: created + ttl,
       };
       map.set(entry.conversationKey, stored);
+      recentlyExpired.delete(entry.conversationKey);
       return stored;
     },
     get(conversationKey) {
@@ -79,14 +86,32 @@ export function createPendingConfirmationStore(opts: {
       if (!entry) return null;
       if (entry.expiresAt <= now()) {
         map.delete(conversationKey);
+        recentlyExpired.set(conversationKey, entry);
         return null;
       }
       return entry;
     },
+    peekRecentlyExpired(conversationKey) {
+      pruneRecentlyExpired(recentlyExpired, now(), recentlyExpiredTtl);
+      return recentlyExpired.get(conversationKey) ?? null;
+    },
     delete(conversationKey) {
       map.delete(conversationKey);
+      recentlyExpired.delete(conversationKey);
     },
   };
+}
+
+function pruneRecentlyExpired(
+  map: Map<string, PendingConfirmation>,
+  now: number,
+  retentionMs: number,
+): void {
+  for (const [key, entry] of map.entries()) {
+    if (entry.expiresAt + retentionMs <= now) {
+      map.delete(key);
+    }
+  }
 }
 
 function assertValidPendingConfirmation(entry: PendingConfirmationInput): void {

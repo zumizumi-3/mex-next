@@ -147,11 +147,12 @@ describe('runScheduledPublish', () => {
       id: `tw-${Math.random().toString(36).slice(2, 8)}`,
     }));
 
+    const poster = makePoster();
     const outcome = await runScheduledPublish({
       config: makeConfig(),
       repo,
       xApi,
-      poster: makePoster(),
+      poster,
       logger: makeLogger(),
       now: () => now,
     });
@@ -160,6 +161,13 @@ describe('runScheduledPublish', () => {
     expect(outcome.published).toBe(2);
     expect(outcome.failed).toBe(0);
     expect(xApi.post).toHaveBeenCalledTimes(2);
+    expect(poster.postMessage).toHaveBeenCalledTimes(2);
+    expect(poster.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelRole: 'customer_thread',
+        content: expect.stringContaining('✅ 投稿しました: https://x.com/i/web/status/'),
+      }),
+    );
 
     const state = await repo.loadState();
     const queue = state.publish_queue ?? [];
@@ -192,6 +200,12 @@ describe('runScheduledPublish', () => {
     expect(outcome.failed).toBe(1);
     expect(outcome.published).toBe(0);
     expect(poster.postEscalation).toHaveBeenCalledTimes(1);
+    expect(poster.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelRole: 'customer_thread',
+        content: '⚠️ 投稿に失敗しました: 429 rate limit',
+      }),
+    );
 
     const state = await repo.loadState();
     const queue = state.publish_queue ?? [];
@@ -232,6 +246,11 @@ describe('runScheduledPublish', () => {
     expect(outcome.failed).toBe(1);
     expect(xApi.post).not.toHaveBeenCalled();
     expect(poster.postEscalation).toHaveBeenCalledTimes(1);
+    expect(poster.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: '⚠️ 投稿に失敗しました: draft.text missing or empty',
+      }),
+    );
 
     const events = await judgmentEvents.query({ kind: 'publish_draft_missing' });
     expect(events).toHaveLength(1);
@@ -314,5 +333,11 @@ describe('runScheduledPublish', () => {
     // stale は due には来ないので publish しようとしない
     expect(xApi.post).not.toHaveBeenCalled();
     expect(poster.postEscalation).toHaveBeenCalledTimes(1);
+    expect(poster.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelRole: 'customer_thread',
+        content: '⌛ 予約 `pub_old` (16:00) は予定時刻から 24h 経過したため自動キャンセルしました',
+      }),
+    );
   });
 });

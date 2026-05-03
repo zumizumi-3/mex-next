@@ -2,6 +2,7 @@ import type { Logger } from 'pino';
 import type { AccountJson, AccountRepo, StateJson } from '../account-state/types.js';
 import type { LlmProvider } from '../llm/bridge.js';
 import type { DiscordPoster } from '../posting/collectors/types.js';
+import { jstDateString } from '../utils/jst.js';
 
 export interface NudgeContext {
   repo: AccountRepo;
@@ -33,15 +34,18 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function emitNudge(ctx: NudgeContext, kind: NudgeKind): Promise<NudgeResult> {
   try {
+    if (await wasEmittedToday(ctx, kind)) {
+      return { posted: false, reason: 'already_emitted_today' };
+    }
     switch (kind) {
       case 'weekly_phase_review':
-        return await emitPhaseReview(ctx, 'weekly');
+        return await withNudgeMark(ctx, kind, emitPhaseReview(ctx, 'weekly'));
       case 'monthly_phase_review':
-        return await emitPhaseReview(ctx, 'monthly');
+        return await withNudgeMark(ctx, kind, emitPhaseReview(ctx, 'monthly'));
       case 'stale_target_review':
-        return await emitStaleTargetReview(ctx);
+        return await withNudgeMark(ctx, kind, emitStaleTargetReview(ctx));
       case 'unanswered_phase_followup':
-        return await emitUnansweredPhaseFollowup(ctx);
+        return await withNudgeMark(ctx, kind, emitUnansweredPhaseFollowup(ctx));
     }
   } catch (error) {
     ctx.logger.warn?.(
@@ -50,6 +54,53 @@ export async function emitNudge(ctx: NudgeContext, kind: NudgeKind): Promise<Nud
     );
     return { posted: false, reason: 'error' };
   }
+}
+
+async function withNudgeMark(
+  ctx: NudgeContext,
+  kind: NudgeKind,
+  pending: Promise<NudgeResult>,
+): Promise<NudgeResult> {
+  const result = await pending;
+  if (result.posted) {
+    await markNudgeEmitted(ctx, kind);
+  }
+  return result;
+}
+
+async function wasEmittedToday(ctx: NudgeContext, kind: NudgeKind): Promise<boolean> {
+  const state = await ctx.repo.loadState();
+  const lastEmitted = nudgeLastEmitted(state);
+  return lastEmitted[kind] === todayJst();
+}
+
+async function markNudgeEmitted(ctx: NudgeContext, kind: NudgeKind): Promise<void> {
+  const today = todayJst();
+  await ctx.repo.withStateLock(async (state) => {
+    const current = objectField((state as Record<string, unknown>).nudge_state);
+    const last = objectField(current.last_emitted);
+    return {
+      state: {
+        ...state,
+        nudge_state: {
+          ...current,
+          last_emitted: {
+            ...last,
+            [kind]: today,
+          },
+        },
+      },
+      result: undefined,
+    };
+  });
+}
+
+function nudgeLastEmitted(state: StateJson): Record<string, unknown> {
+  return objectField(objectField((state as Record<string, unknown>).nudge_state).last_emitted);
+}
+
+function todayJst(): string {
+  return jstDateString(new Date());
 }
 
 async function emitPhaseReview(ctx: NudgeContext, cadence: PhaseCadence): Promise<NudgeResult> {

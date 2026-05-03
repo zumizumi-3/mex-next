@@ -26,6 +26,7 @@ import type {
   DiscordPostThreadResult,
   DiscordPoster,
 } from '../posting/collectors/types.js';
+import { LlmProviderError } from '../llm/index.js';
 
 export interface PostMessageOptions {
   channelRole: string;
@@ -51,6 +52,8 @@ export interface DiscordPosterOptions {
   channelMap: Readonly<Record<string, string>>;
   logger?: Logger;
 }
+
+const THREAD_CREATE_RETRY_DELAY_MS = 5_000;
 
 export class DiscordPosterImpl implements DiscordPoster {
   private readonly client: Client;
@@ -83,13 +86,16 @@ export class DiscordPosterImpl implements DiscordPoster {
     };
     const message: Message = await channel.send(payload);
 
-    let threadId = message.id;
     try {
       const thread = await message.startThread({
         name: opts.title.slice(0, 100) || 'thread',
         autoArchiveDuration: 1440,
       });
-      threadId = thread.id;
+      return {
+        threadId: thread.id,
+        messageId: message.id,
+        delivered: true,
+      };
     } catch (error) {
       this.logger?.warn(
         {
@@ -101,11 +107,43 @@ export class DiscordPosterImpl implements DiscordPoster {
       );
     }
 
-    return {
-      threadId,
-      messageId: message.id,
-      delivered: true,
-    };
+    await sleep(THREAD_CREATE_RETRY_DELAY_MS);
+    try {
+      const thread = await message.startThread({
+        name: opts.title.slice(0, 100) || 'thread',
+        autoArchiveDuration: 1440,
+      });
+      return {
+        threadId: thread.id,
+        messageId: message.id,
+        delivered: true,
+      };
+    } catch (retryError) {
+      this.logger?.warn(
+        {
+          channelId,
+          messageId: message.id,
+          error: errMsg(retryError),
+        },
+        'thread_create_retry_failed',
+      );
+      try {
+        await message.delete();
+      } catch (deleteError) {
+        this.logger?.warn(
+          {
+            channelId,
+            messageId: message.id,
+            error: errMsg(deleteError),
+          },
+          'thread_starter_delete_failed',
+        );
+      }
+      throw new LlmProviderError(
+        `Discord thread create failed after retry: ${errMsg(retryError)}`,
+        retryError,
+      );
+    }
   }
 
   async postMessage(opts: PostMessageOptions): Promise<PostMessageResult> {
@@ -158,6 +196,10 @@ export class DiscordPosterImpl implements DiscordPoster {
 
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

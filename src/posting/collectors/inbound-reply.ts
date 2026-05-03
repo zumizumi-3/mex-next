@@ -86,24 +86,38 @@ interface ReplySession {
   reason: string;
   draft_text: string;
   created_at: string;
-  status: 'open' | 'posted' | 'escalated' | 'error' | 'discord_pending' | 'deferred';
+  status:
+    | 'open'
+    | 'posted'
+    | 'escalated'
+    | 'operator_escalated'
+    | 'error'
+    | 'discord_pending'
+    | 'deferred';
   thread_id?: string;
   message_id?: string;
   /** When status='deferred', the human-readable cause kept for the next retry. */
   last_error?: string;
   /** ISO of the most recent retry attempt (only set for 'deferred' sessions). */
   last_attempt_at?: string;
+  /** ISO of the most recent Discord post attempt for discord_pending sessions. */
+  last_discord_post_attempt_at?: string;
+  /** Number of failed Discord post attempts for this session. */
+  discord_post_attempt_count?: number;
 }
 
 /** Statuses that block re-processing of the same event_id. */
 const TERMINAL_REPLY_STATUSES: ReadonlySet<ReplySession['status']> = new Set([
   'posted',
   'escalated',
+  'operator_escalated',
   'error',
 ]);
 
 const STATE_KEY = 'inbound_reply_sessions';
 const DEFAULT_MAX_FETCH = 50;
+const DISCORD_RETRY_INTERVAL_MS = 30 * 60 * 1000;
+const MAX_DISCORD_POST_ATTEMPTS = 3;
 
 export async function collectInboundReplies(
   opts: CollectInboundRepliesOptions,
@@ -177,6 +191,12 @@ export async function collectInboundReplies(
       }
       continue;
     }
+    if (prior && prior.status === 'discord_pending' && !canAttemptDiscordPost(prior, now())) {
+      if (compareIds(mention.id, highestId) > 0) {
+        highestId = mention.id;
+      }
+      continue;
+    }
 
     // Classify the mention.
     // - For fresh mentions: call the LLM.
@@ -230,6 +250,12 @@ export async function collectInboundReplies(
       draft_text: classification.draft ?? '',
       created_at: prior?.created_at ?? now(),
       status: 'open',
+      ...(prior?.last_discord_post_attempt_at
+        ? { last_discord_post_attempt_at: prior.last_discord_post_attempt_at }
+        : {}),
+      ...(prior?.discord_post_attempt_count
+        ? { discord_post_attempt_count: prior.discord_post_attempt_count }
+        : {}),
     };
 
     try {
@@ -248,8 +274,17 @@ export async function collectInboundReplies(
       // Discord post failed — keep the session in `discord_pending`
       // so the next collector run retries the dispatch instead of
       // burying the reaction.
-      session.status = 'discord_pending';
+      markDiscordPostFailed(session, now());
       session.reason = `${session.reason} | dispatch failed: ${describeError(error)}`;
+      if ((session.discord_post_attempt_count ?? 0) >= MAX_DISCORD_POST_ATTEMPTS) {
+        session.status = 'operator_escalated';
+        await escalateDiscordPostFailure({
+          discordPoster,
+          eventId: mention.id,
+          reason: describeError(error),
+          kind: 'inbound_reply',
+        });
+      }
       errors += 1;
     }
 
@@ -619,6 +654,42 @@ function safeEmitRisk(
     cb(info);
   } catch {
     // observability hooks must never bubble up
+  }
+}
+
+function canAttemptDiscordPost(session: ReplySession, nowIso: string): boolean {
+  const last = session.last_discord_post_attempt_at;
+  if (!last) return true;
+  const lastMs = Date.parse(last);
+  const nowMs = Date.parse(nowIso);
+  if (!Number.isFinite(lastMs) || !Number.isFinite(nowMs)) return true;
+  return nowMs - lastMs >= DISCORD_RETRY_INTERVAL_MS;
+}
+
+function markDiscordPostFailed(session: ReplySession, nowIso: string): void {
+  session.status = 'discord_pending';
+  session.last_discord_post_attempt_at = nowIso;
+  session.discord_post_attempt_count = (session.discord_post_attempt_count ?? 0) + 1;
+}
+
+async function escalateDiscordPostFailure(args: {
+  discordPoster: DiscordPoster;
+  eventId: string;
+  reason: string;
+  kind: string;
+}): Promise<void> {
+  try {
+    await args.discordPoster.postEscalation({
+      channelRole: 'operator',
+      content: [
+        `⚠️ Discord notification failed repeatedly (${args.kind})`,
+        `event_id: \`${args.eventId}\``,
+        `reason: ${args.reason}`,
+      ].join('\n'),
+      metadata: { kind: `${args.kind}.discord_post_failed`, event_id: args.eventId },
+    });
+  } catch {
+    // The session status is still terminal; a later operator digest can surface it.
   }
 }
 

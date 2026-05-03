@@ -276,12 +276,14 @@ describe('collectInboundReplies', () => {
       }),
       postEscalation: vi.fn(),
     } as unknown as DiscordPoster;
+    let now = '2026-05-03T00:00:00Z';
 
     await collectInboundReplies({
       repo,
       xApi,
       bridge,
       discordPoster: failingPoster,
+      now: () => now,
     });
     let sessions = repo.state['inbound_reply_sessions'] as Record<
       string,
@@ -291,12 +293,14 @@ describe('collectInboundReplies', () => {
     expect(bridge.request).toHaveBeenCalledTimes(1);
 
     // Second run: Discord recovers → posted, LLM not re-called.
+    now = '2026-05-03T00:31:00Z';
     const recoveryPoster = makePoster();
     const result = await collectInboundReplies({
       repo,
       xApi,
       bridge,
       discordPoster: recoveryPoster,
+      now: () => now,
     });
     expect(result.posted).toBe(1);
     sessions = repo.state['inbound_reply_sessions'] as Record<

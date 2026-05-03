@@ -65,12 +65,15 @@ interface TargetSession {
   action: 'like' | 'quote' | 'reply' | 'skip';
   draft_text: string;
   rationale: string;
-  status: 'open' | 'posted' | 'skipped' | 'error';
-  phase?: 'open' | 'skipped' | 'error';
+  status: 'open' | 'posted' | 'skipped' | 'operator_escalated' | 'error';
+  phase?: 'open' | 'skipped' | 'operator_escalated' | 'error';
   score?: number;
   created_at: string;
   thread_id?: string;
   message_id?: string;
+  last_discord_post_attempt_at?: string;
+  discord_post_attempt_count?: number;
+  manual_notified_at?: string;
 }
 
 const STATE_KEY = 'target_discovery_sessions';

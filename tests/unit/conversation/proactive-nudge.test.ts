@@ -187,6 +187,32 @@ describe('emitNudge', () => {
     );
   });
 
+  it('同じ nudge は同日 2 回目を no-op にする', async () => {
+    const repo = new InMemoryAccountRepo({
+      account: {
+        account_id: 'zumi-x',
+        phase_history: [
+          { cadence: 'weekly', summary: '週次', updated_at: '2026-04-28T00:00:00Z' },
+        ],
+      },
+    });
+    const bridge = makeBridge();
+    const poster = makePoster();
+    const ctx = { repo, bridge, poster, logger: makeLogger() };
+
+    await expect(emitNudge(ctx, 'weekly_phase_review')).resolves.toEqual({ posted: true });
+    await expect(emitNudge(ctx, 'weekly_phase_review')).resolves.toEqual({
+      posted: false,
+      reason: 'already_emitted_today',
+    });
+
+    expect(poster.postThread).toHaveBeenCalledTimes(1);
+    expect(bridge.call).toHaveBeenCalledTimes(1);
+    expect(repo.peekState().nudge_state).toMatchObject({
+      last_emitted: { weekly_phase_review: '2026-05-03' },
+    });
+  });
+
   it('エラー時は throw せず posted=false を返す', async () => {
     const repo = new InMemoryAccountRepo({
       account: {

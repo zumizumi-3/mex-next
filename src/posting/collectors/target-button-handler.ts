@@ -35,6 +35,7 @@ export type TargetSessionPhase =
   | 'reply_suggesting'
   | 'reply_pending'
   | 'reply_scheduled'
+  | 'operator_escalated'
   | 'error';
 
 export interface TargetDiscoverySession {
@@ -49,7 +50,7 @@ export interface TargetDiscoverySession {
   /** LLM rationale. */
   rationale: string;
   /** Per-collector status (kept for backwards compat). */
-  status: 'open' | 'posted' | 'skipped' | 'error';
+  status: 'open' | 'posted' | 'skipped' | 'operator_escalated' | 'error';
   /** Phase machine — the button-flow uses this. */
   phase?: TargetSessionPhase;
   /** Suggested quote / reply body once phase 2 LLM ran. */
@@ -64,6 +65,9 @@ export interface TargetDiscoverySession {
   score?: number;
   thread_id?: string;
   message_id?: string;
+  last_discord_post_attempt_at?: string;
+  discord_post_attempt_count?: number;
+  manual_notified_at?: string;
   created_at: string;
   updated_at?: string;
 }

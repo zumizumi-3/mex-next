@@ -13,6 +13,7 @@ interface FakeMessage {
   id: string;
   startThread: ReturnType<typeof vi.fn>;
   edit: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
 }
 
 interface FakeChannel {
@@ -31,6 +32,7 @@ function buildFakeChannel(): { channel: FakeChannel; sent: Array<unknown> } {
         id: 'msg_1',
         startThread: vi.fn(async () => ({ id: 'thread_1' })),
         edit: vi.fn(),
+        delete: vi.fn(),
       };
       return msg;
     }),
@@ -95,6 +97,84 @@ describe('DiscordPosterImpl', () => {
     const payload = sent[0] as { content: string; flags?: number };
     expect(payload.content).toBe('silent');
     expect(payload.flags).toBe(4096);
+  });
+
+  it('postThread retries once when thread creation fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: Array<unknown> = [];
+      const startThread = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('discord transient'))
+        .mockResolvedValueOnce({ id: 'thread_2' });
+      const deleteMessage = vi.fn();
+      const channel: FakeChannel = {
+        type: ChannelType.GuildText,
+        send: vi.fn(async (payload: unknown) => {
+          sent.push(payload);
+          return {
+            id: 'msg_2',
+            startThread,
+            edit: vi.fn(),
+            delete: deleteMessage,
+          };
+        }),
+        messages: { fetch: vi.fn() },
+      };
+      const poster = new DiscordPosterImpl(buildFakeClient(channel) as never, {
+        channelMap: { customer_main: 'C1' },
+      });
+
+      const pending = poster.postThread({
+        channelRole: 'customer_main',
+        title: 'retry',
+        content: 'hello',
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const result = await pending;
+
+      expect(result.threadId).toBe('thread_2');
+      expect(startThread).toHaveBeenCalledTimes(2);
+      expect(deleteMessage).not.toHaveBeenCalled();
+      expect(sent).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('postThread deletes the starter and throws when retry also fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const startThread = vi.fn().mockRejectedValue(new Error('discord down'));
+      const deleteMessage = vi.fn(async () => undefined);
+      const channel: FakeChannel = {
+        type: ChannelType.GuildText,
+        send: vi.fn(async () => ({
+          id: 'msg_3',
+          startThread,
+          edit: vi.fn(),
+          delete: deleteMessage,
+        })),
+        messages: { fetch: vi.fn() },
+      };
+      const poster = new DiscordPosterImpl(buildFakeClient(channel) as never, {
+        channelMap: { customer_main: 'C1' },
+      });
+
+      const pending = poster.postThread({
+        channelRole: 'customer_main',
+        title: 'fail',
+        content: 'hello',
+      });
+      const assertion = expect(pending).rejects.toMatchObject({ name: 'LlmProviderError' });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await assertion;
+      expect(startThread).toHaveBeenCalledTimes(2);
+      expect(deleteMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('resolveChannelId throws on missing role', () => {

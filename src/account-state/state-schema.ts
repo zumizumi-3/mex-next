@@ -108,7 +108,7 @@ const InboundReactionSessionSchema = z
      *   error           — terminal failure (LLM rejected etc.)
      */
     status: z
-      .enum(['open', 'posted', 'discord_pending', 'error'])
+      .enum(['open', 'posted', 'discord_pending', 'operator_escalated', 'error'])
       .default('open'),
     reason: z.string().default(''),
     draft_mode: z.enum(['reply', 'quote']).default('quote'),
@@ -117,6 +117,8 @@ const InboundReactionSessionSchema = z
     updated_at: z.string().default(''),
     thread_id: z.string().optional(),
     message_id: z.string().optional(),
+    last_discord_post_attempt_at: z.string().optional(),
+    discord_post_attempt_count: z.number().int().min(0).optional(),
   })
   .passthrough();
 export type InboundReactionSessionJson = z.infer<
@@ -149,12 +151,14 @@ const InboundReplySessionSchema = z
      *   error           — terminal failure (LLM/dispatch fatal)
      */
     status: z
-      .enum(['open', 'posted', 'escalated', 'discord_pending', 'error'])
+      .enum(['open', 'posted', 'escalated', 'discord_pending', 'operator_escalated', 'error'])
       .default('open'),
     created_at: z.string().default(''),
     updated_at: z.string().default(''),
     thread_id: z.string().optional(),
     message_id: z.string().optional(),
+    last_discord_post_attempt_at: z.string().optional(),
+    discord_post_attempt_count: z.number().int().min(0).optional(),
   })
   .passthrough();
 export type InboundReplySessionJson = z.infer<
@@ -205,7 +209,7 @@ const TargetDiscoverySessionSchema = z
     action: z.enum(['like', 'quote', 'reply', 'skip']).default('skip'),
     draft_text: z.string().default(''),
     rationale: z.string().default(''),
-    status: z.enum(['open', 'posted', 'skipped', 'error']).default('open'),
+    status: z.enum(['open', 'posted', 'skipped', 'operator_escalated', 'error']).default('open'),
     phase: z
       .enum([
         'open',
@@ -217,6 +221,7 @@ const TargetDiscoverySessionSchema = z
         'reply_suggesting',
         'reply_pending',
         'reply_scheduled',
+        'operator_escalated',
         'error',
       ])
       .optional(),
@@ -225,6 +230,9 @@ const TargetDiscoverySessionSchema = z
     publish_id: z.string().optional(),
     thread_id: z.string().optional(),
     message_id: z.string().optional(),
+    last_discord_post_attempt_at: z.string().optional(),
+    discord_post_attempt_count: z.number().int().min(0).optional(),
+    manual_notified_at: z.string().optional(),
     created_at: z.string().default(''),
     updated_at: z.string().optional(),
   })
@@ -353,6 +361,12 @@ const ReviewsSchema = z
   })
   .passthrough();
 
+const NudgeStateSchema = z
+  .object({
+    last_emitted: z.record(z.string()).default({}),
+  })
+  .passthrough();
+
 /**
  * state.json schema 全体。Python 版が dict<id, session> で持つものは
  * union で `Record<string, X>` または `X[]` を許容する。
@@ -430,6 +444,7 @@ export const StateJsonSchema = z
     interaction_runtime: InteractionRuntimeSchema.default({} as never),
     trigger_runtime: TriggerRuntimeSchema.default({} as never),
     reviews: ReviewsSchema.default({} as never),
+    nudge_state: NudgeStateSchema.default({} as never),
 
     // misc
     role_queue: z.array(z.unknown()).default([]),

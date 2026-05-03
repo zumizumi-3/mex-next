@@ -386,7 +386,7 @@ describe('runReactionsPoll', () => {
     expect(JSON.stringify(callArg.components)).toContain('target:reply-schedule:901');
   });
 
-  it('automation_level=manual では target session を積むだけで通知も投稿もしない', async () => {
+  it('automation_level=manual でも新規 target session があればボタンなしで 1 件通知する', async () => {
     await seedRepo({
       x_action_system: {
         automation_level: 'manual',
@@ -412,14 +412,24 @@ describe('runReactionsPoll', () => {
 
     expect(outcome.targetAutomation.level).toBe('manual');
     expect(outcome.targetAutomation.inspected).toBe(1);
+    expect(outcome.targetAutomation.notified).toBe(1);
     expect(xApi.post).not.toHaveBeenCalled();
     expect(poster.postThread).not.toHaveBeenCalled();
+    expect(poster.postMessage).toHaveBeenCalledTimes(1);
+    expect(poster.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelRole: 'conversation_digest',
+        content: '新着 1 件あります。`予約見せて` で確認してください',
+        silent: false,
+      }),
+    );
     expect(bridge.call).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'target_action_suggest' }),
     );
     const state = JSON.parse(await readFile(join(workDir, 'state.json'), 'utf-8')) as {
-      target_discovery_sessions?: Record<string, { status?: string }>;
+      target_discovery_sessions?: Record<string, { status?: string; manual_notified_at?: string }>;
     };
     expect(state.target_discovery_sessions?.['902']?.status).toBe('open');
+    expect(state.target_discovery_sessions?.['902']?.manual_notified_at).toBeTruthy();
   });
 });

@@ -73,6 +73,9 @@ export interface TargetAutomationSummary {
   readonly errors: number;
 }
 
+const TARGET_DISCORD_RETRY_INTERVAL_MS = 30 * 60 * 1000;
+const TARGET_MAX_DISCORD_POST_ATTEMPTS = 3;
+
 /**
  * Adapt LLM bridge (.call) into the collectors' LlmProviderLike (.request).
  */
@@ -285,7 +288,39 @@ async function processTargetAutomation(opts: {
     return session.status === 'open' && (session.phase === undefined || session.phase === 'open');
   });
   if (level === 'manual') {
-    return { level, inspected: open.length, notified: 0, autoPosted: 0, skipped: 0, errors: 0 };
+    const unnotified = open.filter((session) => !session.manual_notified_at);
+    let notifyErrors = 0;
+    if (unnotified.length > 0) {
+      const notifiedAt = new Date().toISOString();
+      try {
+        await opts.poster.postMessage({
+          channelRole: 'conversation_digest',
+          content: `新着 ${unnotified.length} 件あります。\`予約見せて\` で確認してください`,
+          silent: false,
+        });
+        for (const session of unnotified) {
+          await writeTargetSession(repo, {
+            ...session,
+            manual_notified_at: notifiedAt,
+            updated_at: notifiedAt,
+          });
+        }
+      } catch (error) {
+        notifyErrors = 1;
+        opts.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'target_manual_notification_failed',
+        );
+      }
+    }
+    return {
+      level,
+      inspected: open.length,
+      notified: unnotified.length > 0 && notifyErrors === 0 ? 1 : 0,
+      autoPosted: 0,
+      skipped: 0,
+      errors: notifyErrors,
+    };
   }
 
   let notified = 0;
@@ -323,8 +358,21 @@ async function processTargetAutomation(opts: {
           });
           autoPosted += 1;
         } else {
-          await postTargetPhase1Approval({ ...opts, session });
-          notified += 1;
+          if (!canAttemptTargetDiscordPost(session)) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            await postTargetPhase1Approval({ ...opts, session });
+            notified += 1;
+          } catch (postError) {
+            await recordTargetDiscordPostFailure({
+              ...opts,
+              session,
+              reason: postError instanceof Error ? postError.message : String(postError),
+            });
+            errors += 1;
+          }
         }
         continue;
       }
@@ -364,25 +412,43 @@ async function processTargetAutomation(opts: {
         continue;
       }
 
-      await postTargetDraftApproval({
-        ...opts,
-        session: {
-          ...session,
-          action: mode,
-          suggested_text: draft,
-        },
-        mode,
-        draft,
-        quality,
-        ...(level === 'full_auto' ? { fallbackReason: 'judge_failed' } : {}),
-      });
-      notified += 1;
+      const sessionWithDraft = {
+        ...session,
+        action: mode,
+        suggested_text: draft,
+      };
+      if (!canAttemptTargetDiscordPost(sessionWithDraft)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        await postTargetDraftApproval({
+          ...opts,
+          session: sessionWithDraft,
+          mode,
+          draft,
+          quality,
+          ...(level === 'full_auto' ? { fallbackReason: 'judge_failed' } : {}),
+        });
+        notified += 1;
+      } catch (postError) {
+        await recordTargetDiscordPostFailure({
+          ...opts,
+          session: sessionWithDraft,
+          reason: postError instanceof Error ? postError.message : String(postError),
+        });
+        errors += 1;
+      }
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
       opts.logger.warn({ error: reason, sessionId: session.event_id }, 'target_automation.failed');
       errors += 1;
       if (session.action === 'quote' || session.action === 'reply') {
         try {
+          if (!canAttemptTargetDiscordPost(session)) {
+            skipped += 1;
+            continue;
+          }
           await postTargetDraftApproval({
             ...opts,
             session,
@@ -391,13 +457,11 @@ async function processTargetAutomation(opts: {
             fallbackReason: reason,
           });
           notified += 1;
-        } catch {
-          await writeTargetSession(repo, {
-            ...session,
-            status: 'error',
-            phase: 'error',
-            rationale: `${session.rationale} | automation failed: ${reason}`,
-            updated_at: new Date().toISOString(),
+        } catch (postError) {
+          await recordTargetDiscordPostFailure({
+            ...opts,
+            session,
+            reason: postError instanceof Error ? postError.message : String(postError),
           });
         }
       }
@@ -540,6 +604,57 @@ async function writeTargetSession(
       : {};
   map[session.event_id] = session;
   await repo.writeState({ ...stateRecord, [TARGET_SESSION_KEY]: map } as never);
+}
+
+function canAttemptTargetDiscordPost(session: TargetDiscoverySession): boolean {
+  const last = session.last_discord_post_attempt_at;
+  if (!last) return true;
+  const lastMs = Date.parse(last);
+  if (!Number.isFinite(lastMs)) return true;
+  return Date.now() - lastMs >= TARGET_DISCORD_RETRY_INTERVAL_MS;
+}
+
+async function recordTargetDiscordPostFailure(opts: {
+  repo: AccountRepo;
+  poster: DiscordPosterImpl;
+  logger: Logger;
+  session: TargetDiscoverySession;
+  reason: string;
+}): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const attemptCount = (opts.session.discord_post_attempt_count ?? 0) + 1;
+  const terminal = attemptCount >= TARGET_MAX_DISCORD_POST_ATTEMPTS;
+  const next: TargetDiscoverySession = {
+    ...opts.session,
+    status: terminal ? 'operator_escalated' : 'open',
+    phase: terminal ? 'operator_escalated' : opts.session.phase,
+    last_discord_post_attempt_at: nowIso,
+    discord_post_attempt_count: attemptCount,
+    rationale: `${opts.session.rationale} | discord post failed: ${opts.reason}`,
+    updated_at: nowIso,
+  };
+  await writeTargetSession(opts.repo, next);
+  if (!terminal) return;
+  try {
+    await opts.poster.postEscalation({
+      channelRole: 'operator',
+      content: [
+        '⚠️ Discord notification failed repeatedly (target_discovery)',
+        `event_id: \`${opts.session.event_id}\``,
+        `target: @${opts.session.target_handle}`,
+        `reason: ${opts.reason}`,
+      ].join('\n'),
+      metadata: {
+        kind: 'target_discovery.discord_post_failed',
+        event_id: opts.session.event_id,
+      },
+    });
+  } catch (error) {
+    opts.logger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'target_discord_post_failure_escalation_failed',
+    );
+  }
 }
 
 function repoAsCollectorRepo(repo: AccountRepo) {
