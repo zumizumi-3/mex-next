@@ -1,53 +1,37 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { TOOL_SPECS, type ToolSpec } from '../../../src/handlers/tool-specs.js';
-import { runAgentLoop } from '../../../src/llm/agent-loop.js';
+import { TOOL_NAMES, TOOL_SPECS, type ToolSpec } from '../../../src/handlers/tool-specs.js';
+import { runAgentLoop, type AgentStateSnapshot } from '../../../src/llm/agent-loop.js';
 import { AGENT_LOOP_SYSTEM } from '../../../src/llm/prompts.js';
+import type { LlmProvider, LlmCallOptions } from '../../../src/llm/bridge.js';
 import { setupHandlerTest } from '../handlers/test-helpers.js';
 
 describe('runAgentLoop', () => {
-  it('read-only tool: list_scheduled_posts を実行して final reply を返す', async () => {
+  it('read-only 依頼は tool を実行せず snapshot からの reply を返す', async () => {
     const scaf = await setupHandlerTest();
-    const handler = vi.fn(async () => ({ content: '🗓️ 予約 1 件', tag: 'schedule.list' }));
-    const spec = toolSpec({ name: 'list_scheduled_posts', destructive: false, handler });
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            { type: 'tool_use', id: 'toolu_1', name: 'list_scheduled_posts', input: {} },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '🗓️ 予約 1 件です。' }],
-        }),
-      );
+    const bridge = jsonBridge({
+      reply: '🗓️ 予約は 1 件です。',
+      tool_call: null,
+      needs_confirmation: false,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: 'system',
-        toolSpecs: [spec],
+        toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
         handlerContext: scaf.ctx,
         userMessage: '予約見せて',
         logger: pino({ level: 'silent' }),
       });
 
-      expect(result.reply).toBe('🗓️ 予約 1 件です。');
-      expect(result.awaitingApproval).toBeUndefined();
-      expect(result.trace).toEqual([
-        { tool: 'list_scheduled_posts', input: {}, outputSummary: '🗓️ 予約 1 件' },
-      ]);
-      expect(handler).toHaveBeenCalledTimes(1);
-      expect(create).toHaveBeenCalledTimes(2);
+      expect(result.reply).toBe('🗓️ 予約は 1 件です。');
+      expect(result.trace).toEqual([]);
+      expect(bridge.calls[0]).toMatchObject({ kind: 'agent_turn', systemPrompt: 'system' });
+      expect(bridge.calls[0]?.jsonSchema).toBeTruthy();
     } finally {
       await scaf.cleanup();
     }
@@ -57,37 +41,27 @@ describe('runAgentLoop', () => {
     const scaf = await setupHandlerTest();
     const handler = vi.fn(async () => ({ content: '🛑 6 件取り消しました', tag: 'cancel' }));
     const spec = toolSpec({ name: 'cancel_publish_items', destructive: true, handler });
-    const create = vi.fn().mockResolvedValueOnce(
-      anthropicMessage({
-        stopReason: 'tool_use',
-        content: [
-          { type: 'text', text: '過去 5 件 + 今日 1 件、計 6 件を取り消します。実行しますか?' },
-          {
-            type: 'tool_use',
-            id: 'toolu_1',
-            name: 'cancel_publish_items',
-            input: { scope: 'all' },
-          },
-        ],
-      }),
-    );
+    const bridge = jsonBridge({
+      reply: '全部=過去含む active 全件、計 6 件を取り消します。実行しますか?',
+      tool_call: { name: 'cancel_publish_items', input: { scope: 'all' } },
+      needs_confirmation: true,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: 'system',
         toolSpecs: [spec],
+        stateSnapshot: snapshot({ today_active: 1, past_active: 5, total_active: 6 }),
         handlerContext: scaf.ctx,
         userMessage: '全部取り消して',
         logger: pino({ level: 'silent' }),
       });
 
-      expect(result.reply).toContain('計 6 件を取り消します');
       expect(result.awaitingApproval).toEqual({
         toolName: 'cancel_publish_items',
         toolInput: { scope: 'all' },
-        promptShown: '過去 5 件 + 今日 1 件、計 6 件を取り消します。実行しますか?',
+        promptShown: '全部=過去含む active 全件、計 6 件を取り消します。実行しますか?',
       });
       expect(handler).not.toHaveBeenCalled();
     } finally {
@@ -95,45 +69,29 @@ describe('runAgentLoop', () => {
     }
   });
 
-  it('pendingApproval 経路: 一致する destructive tool を実行して final reply を返す', async () => {
+  it('pendingApproval 経路: 一致する destructive tool を実行する', async () => {
     const scaf = await setupHandlerTest();
     const handler = vi.fn(async () => ({ content: '✅ 6 件取り消しました', tag: 'cancel' }));
     const spec = toolSpec({ name: 'cancel_publish_items', destructive: true, handler });
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            {
-              type: 'tool_use',
-              id: 'toolu_1',
-              name: 'cancel_publish_items',
-              input: { scope: 'all' },
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '✅ 6 件取り消しました。' }],
-        }),
-      );
+    const bridge = jsonBridge({
+      reply: '✅ 承認済みの「全部取り消し」を実行しました。',
+      tool_call: { name: 'cancel_publish_items', input: { scope: 'all' } },
+      needs_confirmation: false,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: 'system',
         toolSpecs: [spec],
+        stateSnapshot: snapshot({ today_active: 1, past_active: 5, total_active: 6 }),
         handlerContext: scaf.ctx,
         userMessage: 'はい',
         pendingApproval: { toolName: 'cancel_publish_items', toolInput: { scope: 'all' } },
         logger: pino({ level: 'silent' }),
       });
 
-      expect(result.reply).toBe('✅ 6 件取り消しました。');
+      expect(result.reply).toContain('承認済み');
       expect(result.awaitingApproval).toBeUndefined();
       expect(handler).toHaveBeenCalledTimes(1);
       expect(result.trace[0]).toMatchObject({
@@ -146,71 +104,32 @@ describe('runAgentLoop', () => {
     }
   });
 
-  it('TOOL_SPECS の tool 名を固定する', () => {
-    expect(TOOL_SPECS.map((s) => s.name).sort()).toEqual([
-      'add_target_handle',
-      'cancel_onboarding',
-      'cancel_publish_items',
-      'create_post_draft',
-      'enable_all_automation',
-      'get_account_status',
-      'get_automation_status',
-      'get_help',
-      'get_onboarding_status',
-      'get_phase_questionnaire_status',
-      'get_publish_detail',
-      'get_queue_summary',
-      'list_scheduled_posts',
-      'list_targets',
-      'publish_now',
-      'regenerate_knowledge',
-      'remove_target_handle',
-      'run_seed',
-      'run_system_update',
-      'run_training',
-      'set_cadence',
-      'skip_today',
-      'start_onboarding',
-      'start_phase_questionnaire',
-    ]);
+  it('TOOL_SPECS の tool 名を mutating 15 件に固定する', () => {
+    expect(TOOL_SPECS.map((s) => s.name)).toEqual([...TOOL_NAMES]);
+    expect(TOOL_SPECS).toHaveLength(15);
   });
 
-  it('system prompt が顧客語彙 echo と件数明示を誘導する', () => {
-    expect(AGENT_LOOP_SYSTEM).toContain('顧客の語彙を必ず echo');
+  it('system prompt が 1-shot / read-only snapshot / 件数明示を誘導する', () => {
+    expect(AGENT_LOOP_SYSTEM).toContain('schema に合う JSON');
+    expect(AGENT_LOOP_SYSTEM).toContain('read-only な依頼');
     expect(AGENT_LOOP_SYSTEM).toContain('件数を必ず明示');
     expect(AGENT_LOOP_SYSTEM).toContain('全部');
   });
 
   it('add_target_handle: @tanaka を handler で正規化して追加する', async () => {
     const scaf = await setupHandlerTest();
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            {
-              type: 'tool_use',
-              id: 'toolu_1',
-              name: 'add_target_handle',
-              input: { handle: '@tanaka' },
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '✅ @tanaka を追跡対象に追加しました。' }],
-        }),
-      );
+    const bridge = jsonBridge({
+      reply: '✅ @tanaka を追跡対象に追加しました。',
+      tool_call: { name: 'add_target_handle', input: { handle: '@tanaka' } },
+      needs_confirmation: false,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: AGENT_LOOP_SYSTEM,
         toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
         handlerContext: scaf.ctx,
         userMessage: 'はい',
         pendingApproval: { toolName: 'add_target_handle', toolInput: { handle: '@tanaka' } },
@@ -233,34 +152,18 @@ describe('runAgentLoop', () => {
 
   it("set_cadence: level='light' で makeCadenceSetHandler('light') 相当の結果になる", async () => {
     const scaf = await setupHandlerTest();
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            {
-              type: 'tool_use',
-              id: 'toolu_1',
-              name: 'set_cadence',
-              input: { level: 'light' },
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '✅ 投稿ペースを light に切替えました。' }],
-        }),
-      );
+    const bridge = jsonBridge({
+      reply: '✅ 投稿ペースを light に切替えました。',
+      tool_call: { name: 'set_cadence', input: { level: 'light' } },
+      needs_confirmation: false,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: AGENT_LOOP_SYSTEM,
         toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
         handlerContext: scaf.ctx,
         userMessage: 'はい',
         pendingApproval: { toolName: 'set_cadence', toolInput: { level: 'light' } },
@@ -280,29 +183,18 @@ describe('runAgentLoop', () => {
 
   it('run_system_update: operator allowlist 外は permission_denied を tool error として返す', async () => {
     const scaf = await setupHandlerTest();
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            { type: 'tool_use', id: 'toolu_1', name: 'run_system_update', input: {} },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '❌ operator 権限がないため実行できません。' }],
-        }),
-      );
+    const bridge = jsonBridge({
+      reply: '❌ operator 権限がないため実行できません。',
+      tool_call: { name: 'run_system_update', input: {} },
+      needs_confirmation: false,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: AGENT_LOOP_SYSTEM,
         toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
         handlerContext: {
           ...scaf.ctx,
           operatorDiscordUserIds: ['operator-1'],
@@ -313,7 +205,7 @@ describe('runAgentLoop', () => {
         logger: pino({ level: 'silent' }),
       });
 
-      expect(result.reply).toContain('権限');
+      expect(result.reply).toContain('permission_denied');
       expect(result.trace[0]).toEqual({
         tool: 'run_system_update',
         input: {},
@@ -326,34 +218,18 @@ describe('runAgentLoop', () => {
 
   it("start_phase_questionnaire: cadence='monthly' で handler を呼び出す", async () => {
     const scaf = await setupHandlerTest();
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            {
-              type: 'tool_use',
-              id: 'toolu_1',
-              name: 'start_phase_questionnaire',
-              input: { cadence: 'monthly' },
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '✅ 月次アンケートを開始しました。' }],
-        }),
-      );
+    const bridge = jsonBridge({
+      reply: '✅ 月次アンケートを開始しました。',
+      tool_call: { name: 'start_phase_questionnaire', input: { cadence: 'monthly' } },
+      needs_confirmation: false,
+    });
 
     try {
       const result = await runAgentLoop({
-        anthropic: anthropicWith(create),
-        model: 'claude-opus-4-7',
+        bridge,
         systemPrompt: AGENT_LOOP_SYSTEM,
         toolSpecs: TOOL_SPECS,
+        stateSnapshot: snapshot(),
         handlerContext: scaf.ctx,
         userMessage: 'はい',
         pendingApproval: {
@@ -386,22 +262,40 @@ function toolSpec(input: {
   };
 }
 
-function anthropicWith(create: ReturnType<typeof vi.fn>): Anthropic {
-  return { messages: { create } } as unknown as Anthropic;
+function jsonBridge(payload: Record<string, unknown>): LlmProvider & { calls: LlmCallOptions[] } {
+  const calls: LlmCallOptions[] = [];
+  return {
+    calls,
+    async call(opts) {
+      calls.push(opts);
+      return {
+        text: JSON.stringify(payload),
+        usage: { input: 0, output: 0 },
+      };
+    },
+  };
 }
 
-function anthropicMessage(input: {
-  stopReason: Anthropic.Message['stop_reason'];
-  content: Anthropic.Message['content'];
-}): Anthropic.Message {
+function snapshot(
+  queue: Partial<AgentStateSnapshot['queue']> = {},
+): AgentStateSnapshot {
   return {
-    id: 'msg_1',
-    type: 'message',
-    role: 'assistant',
-    model: 'claude-opus-4-7',
-    stop_reason: input.stopReason,
-    stop_sequence: null,
-    content: input.content,
-    usage: { input_tokens: 10, output_tokens: 5 },
+    queue: {
+      today_active: queue.today_active ?? 1,
+      past_active: queue.past_active ?? 0,
+      total_active: queue.total_active ?? 1,
+      samples: queue.samples ?? [
+        {
+          publish_id: 'pub_1',
+          scheduled_at: new Date().toISOString(),
+          status: 'scheduled',
+          preview: 'sample',
+        },
+      ],
+    },
+    automation: { enabled: false, cadence: 'standard', skip_dates: [] },
+    targets: [],
+    onboarding: { active: false, current_question_id: null },
+    account: { account_id: 'zumi-x', display_name: 'tester' },
   };
 }

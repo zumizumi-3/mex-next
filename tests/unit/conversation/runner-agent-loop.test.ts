@@ -1,7 +1,6 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildHandlers } from '../../../src/handlers/index.js';
 import { IntentDrivenRunner } from '../../../src/conversation/runner.js';
 import { buildTurnMessage } from '../../../src/conversation/turn-message.js';
@@ -18,25 +17,16 @@ describe('IntentDrivenRunner agent loop', () => {
         publish_queue: [queueItem('pub_1', new Date().toISOString(), 'scheduled')],
       },
     });
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [{ type: 'tool_use', id: 'toolu_1', name: 'list_scheduled_posts', input: {} }],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '🗓️ 予約 1 件です。' }],
-        }),
-      );
+    const agentBridge = jsonBridge({
+      reply: '🗓️ 予約 1 件です。',
+      tool_call: null,
+      needs_confirmation: false,
+    });
     const runner = new IntentDrivenRunner({
       bridge: unusedBridge(),
       handlers: buildHandlers(),
       handlerContext: scaf.ctx,
-      agentLoop: { anthropic: anthropicWith(create), model: 'claude-opus-4-7' },
+      agentLoop: { bridge: agentBridge },
     });
 
     try {
@@ -50,7 +40,7 @@ describe('IntentDrivenRunner agent loop', () => {
 
       expect(result.output).toBe('🗓️ 予約 1 件です。');
       expect(result.metadata?.agentLoop).toBe(true);
-      expect(create).toHaveBeenCalledTimes(2);
+      expect(agentBridge.calls).toHaveLength(1);
     } finally {
       await scaf.cleanup();
     }
@@ -71,47 +61,24 @@ describe('IntentDrivenRunner agent loop', () => {
       },
     });
     const pendingConfirmations = createPendingConfirmationStore();
-    const create = vi
-      .fn()
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            { type: 'text', text: '過去 5 件 + 今日 1 件、計 6 件を取り消します。実行しますか?' },
-            {
-              type: 'tool_use',
-              id: 'toolu_1',
-              name: 'cancel_publish_items',
-              input: { scope: 'all' },
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'tool_use',
-          content: [
-            {
-              type: 'tool_use',
-              id: 'toolu_2',
-              name: 'cancel_publish_items',
-              input: { scope: 'all' },
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        anthropicMessage({
-          stopReason: 'end_turn',
-          content: [{ type: 'text', text: '✅ 6 件取り消しました。' }],
-        }),
-      );
+    const agentBridge = sequenceBridge([
+      {
+        reply: '過去 5 件 + 今日 1 件、計 6 件を取り消します。実行しますか?',
+        tool_call: { name: 'cancel_publish_items', input: { scope: 'all' } },
+        needs_confirmation: true,
+      },
+      {
+        reply: '✅ 6 件取り消しました。',
+        tool_call: { name: 'cancel_publish_items', input: { scope: 'all' } },
+        needs_confirmation: false,
+      },
+    ]);
     const runner = new IntentDrivenRunner({
       bridge: unusedBridge(),
       handlers: buildHandlers(),
       handlerContext: scaf.ctx,
       pendingConfirmations,
-      agentLoop: { anthropic: anthropicWith(create), model: 'claude-opus-4-7' },
+      agentLoop: { bridge: agentBridge },
     });
 
     try {
@@ -156,12 +123,11 @@ describe('IntentDrivenRunner agent loop', () => {
     const judgmentEvents = new JudgmentEventStream({
       filePath: join(scaf.workDir, 'judgment-events.jsonl'),
     });
-    const create = vi.fn().mockResolvedValueOnce(
-      anthropicMessage({
-        stopReason: 'tool_use',
-        content: [{ type: 'tool_use', id: 'toolu_1', name: 'not_registered', input: {} }],
-      }),
-    );
+    const agentBridge = jsonBridge({
+      reply: '',
+      tool_call: { name: 'not_registered', input: {} },
+      needs_confirmation: false,
+    });
     const runner = new IntentDrivenRunner({
       bridge: jsonBridge({
         intent: 'schedule.list',
@@ -170,7 +136,7 @@ describe('IntentDrivenRunner agent loop', () => {
       }),
       handlers: buildHandlers(),
       handlerContext: { ...scaf.ctx, judgmentEvents },
-      agentLoop: { anthropic: anthropicWith(create), model: 'claude-opus-4-7' },
+      agentLoop: { bridge: agentBridge },
     });
 
     try {
@@ -200,9 +166,12 @@ function unusedBridge(): LlmProvider {
   };
 }
 
-function jsonBridge(payload: Record<string, unknown>): LlmProvider {
+function jsonBridge(payload: Record<string, unknown>): LlmProvider & { calls: unknown[] } {
+  const calls: unknown[] = [];
   return {
-    async call() {
+    calls,
+    async call(opts) {
+      calls.push(opts);
       return {
         text: JSON.stringify(payload),
         usage: { input: 0, output: 0 },
@@ -211,23 +180,14 @@ function jsonBridge(payload: Record<string, unknown>): LlmProvider {
   };
 }
 
-function anthropicWith(create: ReturnType<typeof vi.fn>): Anthropic {
-  return { messages: { create } } as unknown as Anthropic;
-}
-
-function anthropicMessage(input: {
-  stopReason: Anthropic.Message['stop_reason'];
-  content: Anthropic.Message['content'];
-}): Anthropic.Message {
+function sequenceBridge(payloads: Record<string, unknown>[]): LlmProvider {
+  let index = 0;
   return {
-    id: 'msg_1',
-    type: 'message',
-    role: 'assistant',
-    model: 'claude-opus-4-7',
-    stop_reason: input.stopReason,
-    stop_sequence: null,
-    content: input.content,
-    usage: { input_tokens: 10, output_tokens: 5 },
+    async call() {
+      const payload = payloads[index] ?? payloads[payloads.length - 1]!;
+      index += 1;
+      return { text: JSON.stringify(payload), usage: { input: 0, output: 0 } };
+    },
   };
 }
 

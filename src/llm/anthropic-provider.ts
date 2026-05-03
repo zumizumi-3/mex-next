@@ -83,6 +83,18 @@ export function createAnthropicSdkProvider(
             content: userPrompt,
           },
         ],
+        ...(opts.jsonSchema
+          ? {
+              tools: [
+                {
+                  name: 'emit_response',
+                  description: 'Emit your response in the required structure.',
+                  input_schema: opts.jsonSchema as Anthropic.Tool['input_schema'],
+                },
+              ],
+              tool_choice: { type: 'tool', name: 'emit_response' },
+            }
+          : {}),
       };
 
       let raw: Anthropic.Message;
@@ -100,12 +112,22 @@ export function createAnthropicSdkProvider(
         );
       }
 
-      const text = extractText(raw);
+      const text = opts.jsonSchema ? extractForcedToolJson(raw) : extractText(raw);
       const usage = extractUsage(raw);
 
       return { text, usage, raw };
     },
   };
+}
+
+function extractForcedToolJson(message: Anthropic.Message): string {
+  const blocks = message.content ?? [];
+  for (const block of blocks) {
+    if (block.type === 'tool_use' && block.name === 'emit_response') {
+      return JSON.stringify(block.input ?? {});
+    }
+  }
+  return extractText(message);
 }
 
 function extractText(message: Anthropic.Message): string {

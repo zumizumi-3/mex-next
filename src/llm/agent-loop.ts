@@ -1,21 +1,51 @@
-import type Anthropic from '@anthropic-ai/sdk';
 import type { Logger } from 'pino';
 import type { HandlerContext } from '../handlers/types.js';
 import type { ToolSpec } from '../handlers/tool-specs.js';
+import { AGENT_RESPONSE_SCHEMA } from '../handlers/tool-specs.js';
 import { executeTool } from './tool-executor.js';
+import type { LlmKind } from './kinds.js';
+import type { LlmProvider } from './bridge.js';
+
+export interface AgentStateSnapshot {
+  queue: {
+    today_active: number;
+    past_active: number;
+    total_active: number;
+    samples: Array<{
+      publish_id: string;
+      scheduled_at: string;
+      status: string;
+      preview: string;
+    }>;
+  };
+  automation: {
+    enabled: boolean;
+    cadence: 'light' | 'standard' | 'aggressive';
+    skip_dates: string[];
+  };
+  targets: Array<{ handle: string }>;
+  onboarding: {
+    active: boolean;
+    current_question_id: string | null;
+  };
+  account: {
+    account_id: string;
+    display_name: string;
+  };
+}
 
 export interface AgentLoopOptions {
-  anthropic: Anthropic;
-  model: string;
+  bridge: LlmProvider;
+  llmKind?: LlmKind;
   systemPrompt: string;
   toolSpecs: ToolSpec[];
+  stateSnapshot: AgentStateSnapshot;
   handlerContext: HandlerContext;
   userMessage: string;
   /** Confirmation-pending destructive call from the previous turn. */
   pendingApproval?: { toolName: string; toolInput: Record<string, unknown> };
   /** Recent conversation transcript for context. */
   transcript?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  maxIterations?: number;
   abortSignal?: AbortSignal;
   logger: Logger;
 }
@@ -27,178 +57,102 @@ export interface AgentLoopResult {
   awaitingApproval?: { toolName: string; toolInput: Record<string, unknown>; promptShown: string };
   /** Tool call audit trail. */
   trace: Array<{ tool: string; input: unknown; outputSummary: string }>;
-  usage: { input: number; output: number };
   /** Fallback for defensive coverage gaps, e.g. model requested an unknown tool. */
   fallbackToLegacy?: boolean;
   fallbackReason?: 'unknown_tool';
 }
 
-type ToolUseBlock = Anthropic.ToolUseBlock;
-type MessageParam = Anthropic.MessageParam;
-
-const DEFAULT_MAX_ITERATIONS = 6;
-const DEFAULT_MAX_TOKENS = 1000;
+interface AgentStructuredResponse {
+  reply: string;
+  tool_call: null | { name: string; input?: unknown };
+  needs_confirmation: boolean;
+}
 
 export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopResult> {
+  if (opts.abortSignal?.aborted) {
+    throw new Error('agent loop aborted before LLM call');
+  }
+
+  const response = await opts.bridge.call({
+    kind: opts.llmKind ?? 'agent_turn',
+    systemPrompt: opts.systemPrompt,
+    userPrompt: buildAgentUserPrompt(opts),
+    jsonSchema: AGENT_RESPONSE_SCHEMA,
+  });
+
+  if (opts.abortSignal?.aborted) {
+    throw new Error('agent loop aborted after LLM call');
+  }
+
+  const parsed = JSON.parse(response.text) as AgentStructuredResponse;
+  const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
+    ? parsed.reply.trim()
+    : 'すみません、うまく返答を作れませんでした。';
+
+  if (!parsed.tool_call) {
+    return { reply, trace: [] };
+  }
+
   const specsByName = new Map(opts.toolSpecs.map((spec) => [spec.name, spec]));
-  const tools = opts.toolSpecs.map(toAnthropicTool);
-  const messages = buildInitialMessages(opts);
-  const trace: AgentLoopResult['trace'] = [];
-  const usage = { input: 0, output: 0 };
-  const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const spec = specsByName.get(parsed.tool_call.name);
+  if (!spec) {
+    opts.logger.warn({ toolName: parsed.tool_call.name }, 'agent_loop_unknown_tool');
+    return { reply: '', trace: [], fallbackToLegacy: true, fallbackReason: 'unknown_tool' };
+  }
 
-  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
-    const response = await opts.anthropic.messages.create(
-      {
-        model: opts.model,
-        max_tokens: DEFAULT_MAX_TOKENS,
-        system: opts.systemPrompt,
-        messages,
-        tools,
-        tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+  const toolInput = asRecord(parsed.tool_call.input);
+  const needsApproval = spec.destructive && !approvalMatches(opts.pendingApproval, spec.name, toolInput);
+  if (needsApproval) {
+    return {
+      reply,
+      awaitingApproval: {
+        toolName: spec.name,
+        toolInput,
+        promptShown: reply,
       },
-      { signal: opts.abortSignal ?? null },
-    );
-    usage.input += response.usage?.input_tokens ?? 0;
-    usage.output += response.usage?.output_tokens ?? 0;
-
-    if (response.stop_reason === 'end_turn') {
-      const reply = extractText(response.content);
-      return { reply: reply || 'すみません、うまく返答を作れませんでした。', trace, usage };
-    }
-
-    if (response.stop_reason === 'max_tokens' || response.stop_reason === 'stop_sequence') {
-      return {
-        reply: '⚠️ 途中で応答が止まりました。もう一度、短めに指示してください。',
-        trace,
-        usage,
-      };
-    }
-
-    if (response.stop_reason !== 'tool_use') {
-      return {
-        reply: '⚠️ うまく判断できませんでした。もう一度言い換えてください。',
-        trace,
-        usage,
-      };
-    }
-
-    const toolUses = response.content.filter((block): block is ToolUseBlock => {
-      return block.type === 'tool_use';
-    });
-    if (toolUses.length === 0) {
-      return {
-        reply: '⚠️ tool 呼び出しを読み取れませんでした。もう一度言い換えてください。',
-        trace,
-        usage,
-      };
-    }
-
-    const firstDestructive = toolUses.find((toolUse) => {
-      const spec = specsByName.get(toolUse.name);
-      return spec?.destructive === true;
-    });
-    if (firstDestructive) {
-      const spec = specsByName.get(firstDestructive.name);
-      if (!spec) {
-        opts.logger.warn({ toolName: firstDestructive.name }, 'agent_loop_unknown_tool');
-        return { reply: '', trace, usage, fallbackToLegacy: true, fallbackReason: 'unknown_tool' };
-      }
-      const toolInput = asRecord(firstDestructive.input);
-      if (!approvalMatches(opts.pendingApproval, firstDestructive.name, toolInput)) {
-        const promptShown = await buildApprovalPrompt({
-          textFromModel: extractText(response.content),
-          spec,
-          toolInput,
-          ctx: opts.handlerContext,
-        });
-        return {
-          reply: promptShown,
-          awaitingApproval: { toolName: firstDestructive.name, toolInput, promptShown },
-          trace,
-          usage,
-        };
-      }
-    }
-
-    messages.push({
-      role: 'assistant',
-      content: response.content.map(toMessageContentBlock),
-    });
-
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const toolUse of toolUses) {
-      const spec = specsByName.get(toolUse.name);
-      if (!spec) {
-        opts.logger.warn({ toolName: toolUse.name }, 'agent_loop_unknown_tool');
-        return { reply: '', trace, usage, fallbackToLegacy: true, fallbackReason: 'unknown_tool' };
-      }
-      const toolInput = asRecord(toolUse.input);
-      const result = await executeTool(spec, toolInput, opts.handlerContext);
-      const output = result.ok
-        ? result.output
-        : JSON.stringify({ ok: false, error: result.error });
-      trace.push({
-        tool: spec.name,
-        input: toolInput,
-        outputSummary: summarizeOutput(output),
-      });
-      toolResults.push({
-        type: 'tool_result',
-        tool_use_id: toolUse.id,
-        content: output,
-        ...(result.ok ? {} : { is_error: true }),
-      });
-    }
-    messages.push({ role: 'user', content: toolResults });
+      trace: [],
+    };
   }
 
+  const result = await executeTool(spec, toolInput, opts.handlerContext);
+  const output = result.ok ? result.output : JSON.stringify({ ok: false, error: result.error });
+  const trace = [
+    {
+      tool: spec.name,
+      input: toolInput,
+      outputSummary: summarizeOutput(output),
+    },
+  ];
+
   return {
-    reply: '⚠️ 処理が長くなりすぎました。もう一度、対象を絞って指示してください。',
+    reply: result.ok ? reply : `${reply}\n${result.error}`.trim(),
     trace,
-    usage,
   };
 }
 
-function buildInitialMessages(opts: AgentLoopOptions): MessageParam[] {
-  const messages: MessageParam[] = [];
-  for (const turn of opts.transcript ?? []) {
-    if (!turn.content.trim()) continue;
-    messages.push({ role: turn.role, content: turn.content });
-  }
-  messages.push({ role: 'user', content: opts.userMessage });
-  if (opts.pendingApproval) {
-    messages.push({
-      role: 'assistant',
-      content: `承認されました。前回保留した ${opts.pendingApproval.toolName} を実行してください。`,
-    });
-  }
-  return messages;
-}
+function buildAgentUserPrompt(opts: AgentLoopOptions): string {
+  const transcript = (opts.transcript ?? [])
+    .filter((turn) => turn.content.trim().length > 0)
+    .map((turn) => `${turn.role}: ${turn.content}`)
+    .join('\n');
+  const pendingApprovalNote = opts.pendingApproval
+    ? [
+        '前回保留した destructive tool が承認待ちです。',
+        `toolName: ${opts.pendingApproval.toolName}`,
+        `toolInput: ${JSON.stringify(opts.pendingApproval.toolInput)}`,
+        'ユーザが肯定している場合は同じ tool_call を返してください。',
+      ].join('\n')
+    : '承認待ち tool はありません。';
 
-function toAnthropicTool(spec: ToolSpec): Anthropic.Tool {
-  return {
-    name: spec.name,
-    description: spec.description,
-    input_schema: spec.inputSchema,
-  };
-}
-
-function toMessageContentBlock(
-  block: Anthropic.ContentBlock,
-): Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam {
-  if (block.type === 'text') {
-    return { type: 'text', text: block.text };
-  }
-  return { type: 'tool_use', id: block.id, name: block.name, input: block.input };
-}
-
-function extractText(blocks: Anthropic.ContentBlock[]): string {
-  return blocks
-    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
-    .trim();
+  return [
+    `現在の state: ${JSON.stringify(opts.stateSnapshot)}`,
+    '',
+    `会話直前:\n${transcript || '(なし)'}`,
+    '',
+    pendingApprovalNote,
+    '',
+    `ユーザ: ${opts.userMessage}`,
+  ].join('\n');
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -219,67 +173,22 @@ function approvalMatches(
   );
 }
 
-async function buildApprovalPrompt(input: {
-  textFromModel: string;
-  spec: ToolSpec;
-  toolInput: Record<string, unknown>;
-  ctx: HandlerContext;
-}): Promise<string> {
-  if (input.textFromModel.trim()) {
-    return input.textFromModel.trim();
-  }
-  const summary = input.spec.summarize
-    ? await input.spec.summarize(input.toolInput, input.ctx)
-    : '対象';
-  switch (input.spec.name) {
-    case 'publish_now':
-      return `${summary}を今すぐ投稿します。実行しますか?`;
-    case 'cancel_publish_items':
-      return `${summary}を取り消します。実行しますか?`;
-    case 'add_target_handle':
-      return `@${String(input.toolInput.handle ?? '').replace(/^@/, '')} を追跡対象に追加します。実行しますか?`;
-    case 'remove_target_handle':
-      return `@${String(input.toolInput.handle ?? '').replace(/^@/, '')} を追跡対象から外します。実行しますか?`;
-    case 'enable_all_automation':
-      return '自動運用を一括 ON にします。実行しますか?';
-    case 'skip_today':
-      return '今日の予約をスキップします。実行しますか?';
-    case 'set_cadence':
-      return `投稿ペースを ${String(input.toolInput.level ?? '')} に変更します。実行しますか?`;
-    case 'start_onboarding':
-      return '33 問オンボーディングを開始します。実行しますか?';
-    case 'cancel_onboarding':
-      return '進行中のオンボーディングを中断します。実行しますか?';
-    case 'run_seed':
-      return '投稿 draft の一括生成を開始します。実行しますか?';
-    case 'run_training':
-      return '過去投稿の取り込みと voice 学習を開始します。実行しますか?';
-    case 'start_phase_questionnaire':
-      return 'phase questionnaire を開始します。実行しますか?';
-    case 'run_system_update':
-      return 'mex bot の自己更新を開始します。実行しますか?';
-    case 'regenerate_knowledge':
-      return 'knowledge files を再生成します。実行しますか?';
-    default:
-      return `${summary}を変更します。実行しますか?`;
-  }
-}
-
-function summarizeOutput(output: string): string {
-  const compact = output.replace(/\s+/g, ' ').trim();
-  return compact.length > 160 ? `${compact.slice(0, 160)}…` : compact;
-}
-
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`;
   }
   if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
+    const rec = value as Record<string, unknown>;
+    return `{${Object.keys(rec)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(rec[key])}`)
       .join(',')}}`;
   }
   return JSON.stringify(value);
+}
+
+function summarizeOutput(output: string): string {
+  const oneLine = output.replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= 200) return oneLine;
+  return `${oneLine.slice(0, 197)}...`;
 }

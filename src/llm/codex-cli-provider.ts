@@ -7,6 +7,9 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   LlmProviderError,
@@ -80,15 +83,26 @@ export function createCodexCliProvider(opts: CodexCliProviderOptions = {}): LlmP
         throw new LlmProviderError('CodexCliProvider requires timeoutMs');
       }
 
+      let schemaDir: string | undefined;
+      let schemaPath: string | undefined;
+      if (callOpts.jsonSchema) {
+        schemaDir = await mkdtemp(join(tmpdir(), 'mex-codex-schema-'));
+        schemaPath = join(schemaDir, 'schema.json');
+        await writeFile(schemaPath, JSON.stringify(callOpts.jsonSchema), 'utf-8');
+      }
+
       const args = [
         'exec',
         '--skip-git-repo-check',
         '--sandbox',
         'workspace-write',
         ...(opts.model ? ['-c', `model=${opts.model}`] : []),
+        ...(schemaPath ? ['--output-schema', schemaPath] : []),
         '-',
       ];
-      const input = `${systemPrompt}\n\n---\n\n${userPrompt}`;
+      const input = callOpts.jsonSchema
+        ? `${systemPrompt}\n\nReturn only a JSON object matching the provided output schema.\n\n---\n\n${userPrompt}`
+        : `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
       let result: CodexExecaResult;
       const subprocess = runner(binary, args, {
@@ -115,6 +129,10 @@ export function createCodexCliProvider(opts: CodexCliProviderOptions = {}): LlmP
           `codex ${callOpts.kind} failed: ${execErr.shortMessage ?? getErrorMessage(err)}`,
           err,
         );
+      } finally {
+        if (schemaDir) {
+          await rm(schemaDir, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
 
       if (result.exitCode != null && result.exitCode !== 0) {

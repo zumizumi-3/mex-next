@@ -33,16 +33,17 @@ import {
   createPendingConfirmationStore,
   type PendingConfirmationStore,
 } from './pending-confirmation-store.js';
-import type Anthropic from '@anthropic-ai/sdk';
 import { TOOL_SPECS } from '../handlers/tool-specs.js';
 import { runAgentLoop, type AgentLoopResult } from '../llm/agent-loop.js';
 import { AGENT_LOOP_SYSTEM } from '../llm/prompts.js';
+import { buildStateSnapshot } from '../llm/state-snapshot.js';
+import type { LlmKind } from '../llm/kinds.js';
 
 export interface IntentDrivenRunnerOptions {
   bridge: LlmProvider;
   handlers: HandlersMap;
   handlerContext: HandlerContext;
-  agentLoop?: { anthropic: Anthropic; model: string };
+  agentLoop?: { bridge: LlmProvider; llmKind?: LlmKind };
   /** Pending confirmation store. Defaults to an in-memory store. */
   pendingConfirmations?: PendingConfirmationStore;
 }
@@ -91,7 +92,7 @@ export class IntentDrivenRunner implements ConversationRunner {
   private readonly bridge: LlmProvider;
   private readonly handlers: HandlersMap;
   private readonly handlerContext: HandlerContext;
-  private readonly agentLoop?: { anthropic: Anthropic; model: string };
+  private readonly agentLoop?: { bridge: LlmProvider; llmKind?: LlmKind };
 
   private readonly pendingConfirmations: PendingConfirmationStore;
 
@@ -243,11 +244,13 @@ export class IntentDrivenRunner implements ConversationRunner {
     await safeStatus(input.onStatus, '🧠 状況を確認中…');
     let result: AgentLoopResult;
     try {
+      const stateSnapshot = await buildStateSnapshot(input.turnHandlerContext);
       result = await runAgentLoop({
-        anthropic: this.agentLoop.anthropic,
-        model: this.agentLoop.model,
+        bridge: this.agentLoop.bridge,
+        llmKind: this.agentLoop.llmKind,
         systemPrompt: AGENT_LOOP_SYSTEM,
         toolSpecs: TOOL_SPECS,
+        stateSnapshot,
         handlerContext: input.turnHandlerContext,
         userMessage: input.userText,
         pendingApproval: input.pendingApproval,
@@ -309,7 +312,7 @@ export class IntentDrivenRunner implements ConversationRunner {
 
     return {
       output: result.reply,
-      metadata: { agentLoop: true, trace: result.trace, usage: result.usage },
+      metadata: { agentLoop: true, trace: result.trace },
     };
   }
 

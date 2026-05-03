@@ -47,6 +47,12 @@ export interface LlmCallOptions {
   cache?: boolean;
   /** Optional: per-call timeout override. Defaults to `KIND_TIMEOUT_MS[kind]`. */
   timeoutMs?: number;
+  /**
+   * Optional: enforce JSON output matching this schema. When set, the
+   * provider MUST return text that parses to this schema; the bridge
+   * caller can rely on `JSON.parse(response.text)` succeeding.
+   */
+  jsonSchema?: object;
 }
 
 /** Token usage breakdown (cache fields nullable on providers that don't expose them). */
@@ -246,7 +252,10 @@ export function buildLlmRetryOptions(cfg: LlmResilienceConfig): RetryOptions {
  * Fill defaults from kind metadata. Pulled out so providers don't each
  * re-implement the lookup, and so tests can verify the resolution.
  */
-export function fillDefaults(opts: LlmCallOptions): Required<LlmCallOptions> {
+export type FilledLlmCallOptions = Required<Omit<LlmCallOptions, 'jsonSchema'>> &
+  Pick<LlmCallOptions, 'jsonSchema'>;
+
+export function fillDefaults(opts: LlmCallOptions): FilledLlmCallOptions {
   return {
     kind: opts.kind,
     systemPrompt: opts.systemPrompt ?? KIND_SYSTEM_PROMPT[opts.kind],
@@ -254,6 +263,7 @@ export function fillDefaults(opts: LlmCallOptions): Required<LlmCallOptions> {
     maxTokens: opts.maxTokens ?? KIND_MAX_TOKENS[opts.kind],
     cache: opts.cache ?? KIND_CACHE_DEFAULT[opts.kind],
     timeoutMs: opts.timeoutMs ?? KIND_TIMEOUT_MS[opts.kind],
+    ...(opts.jsonSchema ? { jsonSchema: opts.jsonSchema } : {}),
   };
 }
 

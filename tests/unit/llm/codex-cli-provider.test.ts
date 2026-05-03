@@ -108,4 +108,37 @@ describe('createCodexCliProvider', () => {
       message: expect.stringContaining('empty stdout'),
     });
   });
+
+  it('jsonSchema 指定時は --output-schema file を渡す', async () => {
+    const runner = vi.fn<CodexExecaRunner>(() =>
+      resolved({
+        stdout: '{"reply":"ok","tool_call":null,"needs_confirmation":false}',
+        stderr: '',
+        exitCode: 0,
+      }),
+    );
+    const provider = createCodexCliProvider({
+      binary: 'codex-test',
+      cwd: '/tmp/account',
+      runner,
+    });
+    const schema = { type: 'object', properties: { reply: { type: 'string' } } };
+
+    const result = await provider.call(baseCall({ kind: 'agent_turn', jsonSchema: schema }));
+
+    expect(JSON.parse(result.text)).toEqual({
+      reply: 'ok',
+      tool_call: null,
+      needs_confirmation: false,
+    });
+    const args = runner.mock.calls[0]?.[1] ?? [];
+    const schemaFlagIndex = args.indexOf('--output-schema');
+    expect(schemaFlagIndex).toBeGreaterThanOrEqual(0);
+    expect(args[schemaFlagIndex + 1]).toMatch(/schema\.json$/);
+    expect(runner.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({
+        input: expect.stringContaining('Return only a JSON object matching the provided output schema.'),
+      }),
+    );
+  });
 });

@@ -255,19 +255,10 @@ async function main(): Promise<void> {
   const bridge = await buildLlmBridge(config, log, poster);
   const xApi = buildXApiClient(config, log, poster);
   const agentLoopDisabledByEnv = process.env.MEX_AGENT_LOOP_DISABLED === '1';
-  const agentLoopDisabledReason = agentLoopDisabledByEnv
-    ? 'disabled_by_env'
-    : config.anthropicApiKey
-      ? null
-      : 'missing_anthropic_key';
-  const agentLoopAnthropic =
-    !agentLoopDisabledReason && config.anthropicApiKey
-      ? new Anthropic({ apiKey: config.anthropicApiKey })
-      : undefined;
-  if (agentLoopAnthropic) {
-    log.info('agent_loop_enabled');
+  if (agentLoopDisabledByEnv) {
+    log.info({ agent_loop_disabled_reason: 'disabled_by_env' }, 'agent_loop_disabled');
   } else {
-    log.info({ agent_loop_disabled_reason: agentLoopDisabledReason }, 'agent_loop_disabled');
+    log.info('agent_loop_enabled');
   }
 
   const judgmentEvents = new JudgmentEventStream({
@@ -295,12 +286,7 @@ async function main(): Promise<void> {
     bridge,
     handlers,
     handlerContext,
-    agentLoop: agentLoopAnthropic
-      ? {
-          anthropic: agentLoopAnthropic,
-          model: 'claude-opus-4-7',
-        }
-      : undefined,
+    agentLoop: agentLoopDisabledByEnv ? undefined : { bridge, llmKind: 'agent_turn' },
   });
 
   // Auto-derive allowed channels from the role mapping. Customers should

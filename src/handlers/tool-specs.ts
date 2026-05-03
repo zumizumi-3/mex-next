@@ -1,26 +1,18 @@
 import type { Handler, HandlerArgs, HandlerContext } from './types.js';
 import {
   handleAutomationEnableAll,
-  handleAutomationStatus,
   handleCadenceSkipToday,
-  handleHelpShow,
   handleOnboardCancel,
   handleOnboardStart,
-  handleOnboardStatus,
   handlePhaseQuestionnaireStart,
-  handlePhaseQuestionnaireStatus,
   handlePostCreate,
   handleQueueSummary,
   handleScheduleCancel,
-  handleScheduleDetail,
-  handleScheduleList,
   handleSchedulePublishNow,
   handleSeedRun,
-  handleStatusShow,
   handleSystemRegenerateKnowledge,
   handleSystemUpdate,
   handleTargetAdd,
-  handleTargetList,
   handleTargetRemove,
   handleTrainingRun,
   makeCadenceSetHandler,
@@ -71,6 +63,44 @@ function passThrough(input: Record<string, unknown>): HandlerArgs {
 function emptyArgs(): HandlerArgs {
   return {};
 }
+
+export const TOOL_NAMES = [
+  'cancel_publish_items',
+  'publish_now',
+  'add_target_handle',
+  'remove_target_handle',
+  'enable_all_automation',
+  'skip_today',
+  'set_cadence',
+  'create_post_draft',
+  'start_onboarding',
+  'cancel_onboarding',
+  'run_seed',
+  'run_training',
+  'start_phase_questionnaire',
+  'run_system_update',
+  'regenerate_knowledge',
+] as const;
+
+export const AGENT_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    reply: {
+      type: 'string',
+      description: '顧客向け返答 text。確認が必要な場合は件数や対象を明示すること。',
+    },
+    tool_call: {
+      type: ['object', 'null'],
+      properties: {
+        name: { type: 'string', enum: [...TOOL_NAMES] },
+        input: { type: 'object' },
+      },
+      required: ['name', 'input'],
+    },
+    needs_confirmation: { type: 'boolean' },
+  },
+  required: ['reply', 'tool_call', 'needs_confirmation'],
+} as const;
 
 const setCadenceToolHandler: Handler = async (ctx, args) => {
   const level = String(args.level ?? '').trim();
@@ -123,33 +153,6 @@ function numberField(value: unknown): number {
 
 export const TOOL_SPECS: ToolSpec[] = [
   {
-    name: 'list_scheduled_posts',
-    description:
-      "予約済みの投稿一覧を返す。顧客が「予約見せて」「今日の予約」「キュー確認」と言ったら呼ぶ。全 active 予約を、過去時刻・今日・明日・以降に分けて返す。",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        status: {
-          type: 'string',
-          enum: ['active'],
-          description: "active の予約のみを見る。省略時も active と同じ。",
-        },
-      },
-    },
-    destructive: false,
-    buildHandlerArgs: passThrough,
-    handler: handleScheduleList,
-  },
-  {
-    name: 'get_queue_summary',
-    description:
-      '予約 queue の概要を返す。active 件数を today / past / total で分類。cancel 系の前にこれを呼んで件数を顧客に伝えるべき。',
-    inputSchema: { type: 'object', properties: {} },
-    destructive: false,
-    buildHandlerArgs: emptyArgs,
-    handler: handleQueueSummary,
-  },
-  {
     name: 'cancel_publish_items',
     description:
       "予約投稿を取り消す。顧客が「取り消して」「全部取り消して」「今日だけ消して」と言ったら使う。scope='all' は過去残りを含む active 全件、scope='today_all' は今日の active のみ、publish_id/time_hint は単体取消。",
@@ -183,36 +186,6 @@ export const TOOL_SPECS: ToolSpec[] = [
     handler: handleSchedulePublishNow,
   },
   {
-    name: 'get_publish_detail',
-    description:
-      '予約投稿 1 件の詳細と本文プレビューを返す。顧客が「この予約の中身」「08:32 の詳細」「pub_xxx 見せて」と言ったら使う。',
-    inputSchema: {
-      type: 'object',
-      properties: idOrTimeProperties,
-    },
-    destructive: false,
-    buildHandlerArgs: passThrough,
-    handler: handleScheduleDetail,
-  },
-  {
-    name: 'get_account_status',
-    description:
-      'アカウント運用状態を返す。cadence、予約数、skip dates など。顧客が「状態確認」「今どうなってる」と言ったら使う。',
-    inputSchema: { type: 'object', properties: {} },
-    destructive: false,
-    buildHandlerArgs: emptyArgs,
-    handler: handleStatusShow,
-  },
-  {
-    name: 'get_help',
-    description:
-      'MeX bot の使い方を返す。顧客が「使い方」「ヘルプ」「何ができる」と聞いたら使う。',
-    inputSchema: { type: 'object', properties: {} },
-    destructive: false,
-    buildHandlerArgs: emptyArgs,
-    handler: handleHelpShow,
-  },
-  {
     name: 'add_target_handle',
     description:
       'X の追跡対象 handle を追加する。顧客が「@tanaka を追跡して」「ターゲットに追加」と言ったら使う。handle は @ なし。',
@@ -228,15 +201,6 @@ export const TOOL_SPECS: ToolSpec[] = [
     handler: handleTargetAdd,
   },
   {
-    name: 'list_targets',
-    description:
-      '追跡対象 handle の一覧を返す。顧客が「ターゲット一覧」「追跡対象見せて」と言ったら使う。',
-    inputSchema: { type: 'object', properties: {} },
-    destructive: false,
-    buildHandlerArgs: emptyArgs,
-    handler: handleTargetList,
-  },
-  {
     name: 'remove_target_handle',
     description:
       'X の追跡対象 handle を削除する。顧客が「@tanaka を外して」「追跡対象から削除」と言ったら使う。handle は @ なし。',
@@ -250,15 +214,6 @@ export const TOOL_SPECS: ToolSpec[] = [
     destructive: true,
     buildHandlerArgs: passThrough,
     handler: handleTargetRemove,
-  },
-  {
-    name: 'get_automation_status',
-    description:
-      '自動運用 gate の状態を返す。顧客が「自動運用どうなってる」「automation status」と聞いたら使う。',
-    inputSchema: { type: 'object', properties: {} },
-    destructive: false,
-    buildHandlerArgs: emptyArgs,
-    handler: handleAutomationStatus,
   },
   {
     name: 'enable_all_automation',
@@ -320,15 +275,6 @@ export const TOOL_SPECS: ToolSpec[] = [
     handler: handleOnboardStart,
   },
   {
-    name: 'get_onboarding_status',
-    description:
-      'オンボーディングの進行状況を返す。顧客が「オンボーディング状況」「今どこまで」と聞いたら使う。',
-    inputSchema: { type: 'object', properties: {} },
-    destructive: false,
-    buildHandlerArgs: emptyArgs,
-    handler: handleOnboardStatus,
-  },
-  {
     name: 'cancel_onboarding',
     description:
       '進行中のオンボーディングを中断する。顧客が「オンボーディングやめる」「中止」と言ったら使う。',
@@ -380,20 +326,6 @@ export const TOOL_SPECS: ToolSpec[] = [
     destructive: true,
     buildHandlerArgs: passThrough,
     handler: handlePhaseQuestionnaireStart,
-  },
-  {
-    name: 'get_phase_questionnaire_status',
-    description:
-      'phase questionnaire の最近のセッションや進行状況を返す。cadence で絞り込み可能。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        cadence: { type: 'string', enum: ['weekly', 'monthly', 'quarterly'] },
-      },
-    },
-    destructive: false,
-    buildHandlerArgs: passThrough,
-    handler: handlePhaseQuestionnaireStatus,
   },
   {
     name: 'run_system_update',

@@ -96,6 +96,9 @@ export function createClaudeCodeProvider(
         systemPrompt,
         ...extraArgs,
       ];
+      if (opts.jsonSchema) {
+        args.push('--json-schema', JSON.stringify(opts.jsonSchema));
+      }
 
       let result: { stdout: string; stderr: string; exitCode?: number };
       try {

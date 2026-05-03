@@ -41,6 +41,10 @@ export {
   buildIntentUserPrompt,
 } from './prompts.js';
 
+export type { AgentStateSnapshot } from './agent-loop.js';
+export { runAgentLoop } from './agent-loop.js';
+export { buildStateSnapshot } from './state-snapshot.js';
+
 export type {
   AnthropicProviderConfig,
   AnthropicMessagesSurface,

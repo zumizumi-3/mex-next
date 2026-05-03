@@ -25,7 +25,8 @@ export type LlmKind =
   | 'plan_writeback_apply'
   | 'content_seeding_topics'
   | 'initial_training_reverse'
-  | 'phase_questionnaire_synthesize';
+  | 'phase_questionnaire_synthesize'
+  | 'agent_turn';
 
 export const ALL_LLM_KINDS: readonly LlmKind[] = [
   'post_v2_generate',
@@ -44,6 +45,7 @@ export const ALL_LLM_KINDS: readonly LlmKind[] = [
   'content_seeding_topics',
   'initial_training_reverse',
   'phase_questionnaire_synthesize',
+  'agent_turn',
 ] as const;
 
 /**
@@ -70,6 +72,7 @@ export const KIND_TIMEOUT_MS: Record<LlmKind, number> = {
   content_seeding_topics: 45_000,
   initial_training_reverse: 30_000,
   phase_questionnaire_synthesize: 60_000,
+  agent_turn: 60_000,
 };
 
 /**
@@ -95,6 +98,7 @@ export const KIND_MAX_TOKENS: Record<LlmKind, number> = {
   content_seeding_topics: 1_200,
   initial_training_reverse: 800,
   phase_questionnaire_synthesize: 2_000,
+  agent_turn: 1_500,
 };
 
 export type LlmProviderName = 'anthropic' | 'claude_code' | 'codex';
@@ -124,6 +128,7 @@ export const KIND_PROVIDER: Record<LlmKind, LlmProviderName> = {
   content_seeding_topics: 'claude_code',
   initial_training_reverse: 'claude_code',
   phase_questionnaire_synthesize: 'claude_code',
+  agent_turn: 'anthropic',
 };
 
 /**
@@ -150,4 +155,5 @@ export const KIND_CACHE_DEFAULT: Record<LlmKind, boolean> = {
   content_seeding_topics: false,
   initial_training_reverse: true,
   phase_questionnaire_synthesize: false,
+  agent_turn: true,
 };
