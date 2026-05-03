@@ -17,12 +17,15 @@ import type { HandlerArgs, HandlerContext, HandlerResult } from './types.js';
 import {
   OnboardingCollector,
   ONBOARDING_QUESTION_COUNT,
+  pendingReviewForQuestion,
   questionIndexFor,
   renderQuestion,
   type OnboardingSession,
 } from '../onboarding/collector.js';
 import { ONBOARDING_QUESTIONS, findQuestionById } from '../onboarding/questions.js';
+import { startPhaseQuestionnaire } from '../phase-questionnaire/runner.js';
 import { STATE_EMOJI } from '../discord/templates.js';
+import type { LlmProvider } from '../llm/bridge.js';
 
 /** Build a collector tied to the handler context. */
 export function buildCollectorFromContext(ctx: HandlerContext): OnboardingCollector {
@@ -53,7 +56,7 @@ export async function handleOnboardStart(
   const lines = [
     `🟢 オンボーディングを開始しました (${ONBOARDING_QUESTION_COUNT} 問 / セッション \`${session.id}\`)`,
     '',
-    renderQuestion(question, Math.max(0, idx)),
+    renderOnboardingPrompt(session, question, Math.max(0, idx)),
     '',
     '_この thread にそのまま自然文で返してください。途中でやめたい時は「やめる」と書いてください。_',
   ];
@@ -85,7 +88,7 @@ export async function handleOnboardStatus(
     const idx = questionIndexFor(current.id);
     lines.push('');
     lines.push('現在の質問:');
-    lines.push(renderQuestion(current, Math.max(0, idx)));
+    lines.push(renderOnboardingPrompt(session, current, Math.max(0, idx)));
   }
   return { content: lines.join('\n'), tag: 'onboard.status' };
 }
@@ -128,6 +131,34 @@ export async function applyFreeFormAnswer(
     await collector.cancel(session.id);
     return `${STATE_EMOJI.cancelled} オンボーディング (\`${session.id}\`) を中断しました。`;
   }
+  const currentReview = pendingReviewForQuestion(session, session.currentQuestionId);
+  if (currentReview) {
+    const verdict = await classifyReviewDecision(ctx.bridge, {
+      questionId: currentReview.id,
+      question: currentReview.question.question,
+      savedValueText: currentReview.savedValueText,
+      reply: trimmed,
+    });
+    if (verdict === 'keep') {
+      const updated = await collector.keepCurrentReviewAnswer(session.id);
+      return renderUpdatedOnboardingSession(ctx, collector, updated);
+    }
+    if (verdict === 'change') {
+      const updated = await collector.changeCurrentReviewAnswer(session.id);
+      const question = findQuestionById(updated.currentQuestionId);
+      if (!question) {
+        return '⚠️ 次の質問が見つかりませんでした。operator に連絡してください。';
+      }
+      const idx = questionIndexFor(question.id);
+      return renderQuestion(question, Math.max(0, idx));
+    }
+    return [
+      `${STATE_EMOJI.attention} 既存回答を維持するか変更するかを判断できませんでした。`,
+      '「維持」または「変更する」と返してください。',
+      '',
+      renderReviewQuestion(currentReview, questionIndexFor(currentReview.id)),
+    ].join('\n');
+  }
   const skipping = trimmed === 'skip' || trimmed === 'スキップ' || trimmed === '飛ばす';
   let answer: unknown = trimmed;
   if (skipping) {
@@ -139,9 +170,18 @@ export async function applyFreeFormAnswer(
     }
   }
   const updated = await collector.answerCurrent(session.id, answer);
+  return renderUpdatedOnboardingSession(ctx, collector, updated);
+}
+
+async function renderUpdatedOnboardingSession(
+  ctx: HandlerContext,
+  collector: OnboardingCollector,
+  updated: OnboardingSession,
+): Promise<string> {
   if (updated.state === 'completed') {
     try {
       const finalize = await collector.finalize(updated.id);
+      const phase = await startOnboardingPhaseBridge(ctx);
       // Auto-bootstrap as a fire-and-forget background task:
       // indexContext + generateCandidate + 5-axis judge can take 30+
       // seconds. Don't make the customer wait at the end of the wizard.
@@ -152,6 +192,8 @@ export async function applyFreeFormAnswer(
         `${STATE_EMOJI.ok} オンボーディング完了！ account.json を更新しました。`,
         `- account_id: \`${finalize.account.account_id}\``,
         `- display_name: ${finalize.account.display_name}`,
+        '',
+        phase,
         '',
         '日次運用開始。明朝 07:00 JST から自動で投稿候補が作られます。',
         '\n📝 最初の投稿候補を作成中です…(まもなく別 thread で届きます)',
@@ -171,7 +213,122 @@ export async function applyFreeFormAnswer(
     return '⚠️ 次の質問が見つかりませんでした。operator に連絡してください。';
   }
   const idx = questionIndexFor(nextQ.id);
-  return renderQuestion(nextQ, Math.max(0, idx));
+  return renderOnboardingPrompt(updated, nextQ, Math.max(0, idx));
+}
+
+function renderOnboardingPrompt(
+  session: OnboardingSession,
+  question: NonNullable<ReturnType<typeof findQuestionById>>,
+  index: number,
+): string {
+  const review = pendingReviewForQuestion(session, question.id);
+  return review ? renderReviewQuestion(review, index) : renderQuestion(question, index);
+}
+
+function renderReviewQuestion(
+  review: NonNullable<ReturnType<typeof pendingReviewForQuestion>>,
+  index: number,
+): string {
+  return [
+    `Q${index + 1}/${ONBOARDING_QUESTION_COUNT} (${review.question.category}) ${review.question.question}`,
+    '',
+    `既存回答: ${review.savedValueText}`,
+    'このまま維持しますか？ 変更しますか？',
+    '維持する場合は「維持」、変更する場合は「変更する」と返してください。',
+  ].join('\n');
+}
+
+type ReviewDecision = 'keep' | 'change';
+
+async function classifyReviewDecision(
+  bridge: LlmProvider,
+  input: {
+    questionId: string;
+    question: string;
+    savedValueText: string;
+    reply: string;
+  },
+): Promise<ReviewDecision | null> {
+  const local = classifyReviewDecisionLocal(input.reply);
+  if (local) return local;
+  try {
+    const response = await bridge.call({
+      kind: 'onboarding_review_decision' as never,
+      userPrompt: JSON.stringify({
+        task: 'Classify whether the customer wants to keep or change a saved onboarding answer. Return JSON: {"verdict":"keep"} or {"verdict":"change"}.',
+        question_id: input.questionId,
+        question: input.question,
+        saved_value: input.savedValueText,
+        customer_reply: input.reply,
+      }),
+    });
+    return classifyReviewDecisionFromLlmText(response.text);
+  } catch {
+    return null;
+  }
+}
+
+function classifyReviewDecisionLocal(reply: string): ReviewDecision | null {
+  const text = reply.trim().toLowerCase();
+  if (!text) return null;
+  if (
+    text === 'keep' ||
+    text === 'no' ||
+    text === 'n' ||
+    text.includes('維持') ||
+    text.includes('そのまま') ||
+    text.includes('変えない') ||
+    text.includes('変更しない')
+  ) {
+    return 'keep';
+  }
+  if (
+    text === 'change' ||
+    text === 'yes' ||
+    text === 'y' ||
+    text.includes('変更') ||
+    text.includes('変える') ||
+    text.includes('変えたい') ||
+    text.includes('修正')
+  ) {
+    return 'change';
+  }
+  return null;
+}
+
+function classifyReviewDecisionFromLlmText(raw: string): ReviewDecision | null {
+  const text = raw.trim().toLowerCase();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text) as { verdict?: unknown };
+    if (parsed.verdict === 'keep' || parsed.verdict === 'change') {
+      return parsed.verdict;
+    }
+  } catch {
+    // fall through to text matching
+  }
+  return classifyReviewDecisionLocal(text);
+}
+
+async function startOnboardingPhaseBridge(ctx: HandlerContext): Promise<string> {
+  try {
+    const session = await startPhaseQuestionnaire({
+      repo: ctx.repo,
+      bridge: ctx.bridge,
+      poster: ctx.discordPoster,
+      cadence: 'quarterly',
+      logger: ctx.logger,
+      autoChainNext: true,
+    });
+    const first = session.questions[0];
+    return [
+      '🎉 続けて、四半期→月次→週次 の方針合わせに入ります。',
+      first ? `最初の質問:\n${first.question}` : '最初の質問を開始しました。',
+    ].join('\n');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `${STATE_EMOJI.attention} 方針合わせアンケートの開始に失敗しました: ${message}`;
+  }
 }
 
 /** Re-export for handler registry consumers. */

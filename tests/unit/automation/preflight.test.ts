@@ -231,14 +231,41 @@ describe('runPreflight', () => {
     expect(gate?.hint).toBeTruthy();
   });
 
-  it('anthropic key 空 → fail', async () => {
+  it('anthropic key 空かつ claude/codex 経路なし → fail', async () => {
     const args = defaultArgs();
+    const noLlmRunner = makeRunner({
+      doppler: { exitCode: 0 },
+      git: { exitCode: 0 },
+      claude: { exitCode: 1 },
+      codex: { exitCode: 1 },
+    });
     const result = await runPreflight({
       ...args,
       config: makeConfig({ anthropicApiKey: '' as unknown as string }),
+      runner: noLlmRunner,
     });
     const gate = result.gates.find((g) => g.name === 'anthropic_api_key_present');
     expect(gate?.status).toBe('fail');
+    expect(gate?.message).toContain('LLM provider');
+  });
+
+  it('anthropic key 空でも claude_code が利用可能なら pass', async () => {
+    const args = defaultArgs();
+    const claudeRunner = makeRunner({
+      doppler: { exitCode: 0 },
+      git: { exitCode: 0 },
+      claude: { exitCode: 0, stdout: '1.0.0' },
+      codex: { exitCode: 1 },
+    });
+    const result = await runPreflight({
+      ...args,
+      config: makeConfig({ anthropicApiKey: '' as unknown as string }),
+      runner: claudeRunner,
+    });
+    const gate = result.gates.find((g) => g.name === 'anthropic_api_key_present');
+    expect(gate?.status).toBe('pass');
+    expect(gate?.message).toContain('claude_code');
+    expect(result.ok).toBe(true);
   });
 
   it('X API credentials 一部欠け → fail (不足キーを列挙)', async () => {

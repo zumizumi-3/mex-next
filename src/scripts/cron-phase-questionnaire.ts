@@ -3,7 +3,7 @@
  * Cron entry: kick off a periodic phase questionnaire.
  *
  * Invoked by `mex-phase-questionnaire-{cadence}` systemd timer:
- *   /usr/bin/node /opt/mex-next/dist/scripts/cron-phase-questionnaire.js --cadence monthly
+ *   /usr/bin/node /opt/mex-next/dist/scripts/cron-phase-questionnaire.js --account-id zumi-x --cadence monthly
  *
  * Wires the smallest possible runtime (config / repo / bridge / poster)
  * and calls `startPhaseQuestionnaire`. The actual answer collection
@@ -27,13 +27,20 @@ import { startPhaseQuestionnaire } from '../phase-questionnaire/runner.js';
 import type { PhaseCadence } from '../phase-questionnaire/questions.js';
 
 interface CliArgs {
+  accountId?: string;
   cadence: PhaseCadence;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
+  let accountId: string | undefined;
   let cadence: PhaseCadence = 'monthly';
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === '--account-id') {
+      accountId = argv[i + 1];
+      i += 1;
+      continue;
+    }
     if (arg === '--cadence') {
       const value = argv[i + 1];
       if (value === 'weekly' || value === 'monthly' || value === 'quarterly') {
@@ -42,12 +49,14 @@ function parseArgs(argv: readonly string[]): CliArgs {
       i += 1;
     }
   }
-  return { cadence };
+  return { ...(accountId ? { accountId } : {}), cadence };
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const config = loadConfig(process.env);
+  const config = loadConfig(
+    args.accountId ? { ...process.env, ACCOUNT_ID: args.accountId } : process.env,
+  );
   const log = createLogger({ level: config.logLevel });
 
   log.info({ cadence: args.cadence, accountId: config.accountId }, 'cron_phase_questionnaire_start');

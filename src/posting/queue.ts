@@ -305,6 +305,38 @@ export async function markFailed(opts: {
 }
 
 /**
+ * Release queue items parked as `held` back to `scheduled`.
+ *
+ * `held` means automation was paused or required operator review, so
+ * the publish cron intentionally ignores it. `automation.enable_all`
+ * calls this helper after approval gates are opened; that keeps
+ * dueItems conservative while still providing an explicit recovery path.
+ */
+export async function releaseHeldPublishItems(opts: {
+  repo: AccountRepo;
+}): Promise<PublishItem[]> {
+  const { repo } = opts;
+  return repo.withStateLock(async (state) => {
+    const queue: PublishItem[] = state.publish_queue ?? [];
+    const released: PublishItem[] = [];
+    const nextQueue = queue.map((item) => {
+      if (item.status !== 'held') return item;
+      const next: PublishItem = {
+        ...item,
+        status: 'scheduled',
+        last_error: '',
+      };
+      released.push(next);
+      return next;
+    });
+    return {
+      state: { ...state, publish_queue: nextQueue },
+      result: released,
+    };
+  });
+}
+
+/**
  * Reschedule a queue item.
  *
  * - `'soon'`     ⇒ now + 5 min, then ensureMinGap against existing.

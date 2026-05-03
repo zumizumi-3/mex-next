@@ -330,7 +330,9 @@ step_systemd() {
     ok "mex-self-update.{service,timer} 配置"
 
     local unit
-    for unit in mex-daily mex-weekly-retro mex-reactions-poll mex-publish mex-morning-digest mex-self-check; do
+    for unit in mex-daily mex-weekly-retro mex-reactions-poll mex-publish \
+                mex-morning-digest mex-self-check \
+                mex-phase-questionnaire-monthly mex-phase-questionnaire-weekly; do
         local svc_tmpl="$MEX_NEXT_DIR/deploy/timers/${unit}.service.template"
         local timer_tmpl="$MEX_NEXT_DIR/deploy/timers/${unit}.timer.template"
         [ -f "$svc_tmpl" ] || { warn "${unit}.service.template が無い、skip"; continue; }
@@ -360,12 +362,18 @@ step_start() {
 
     systemctl enable --now mex-self-update.timer || warn "mex-self-update.timer enable 失敗"
     local unit timer
-    for unit in mex-daily mex-weekly-retro mex-reactions-poll mex-publish mex-morning-digest mex-self-check; do
+    for unit in mex-daily mex-weekly-retro mex-reactions-poll mex-publish \
+                mex-morning-digest mex-self-check \
+                mex-phase-questionnaire-monthly mex-phase-questionnaire-weekly; do
         timer="${unit}-${ACCOUNT_ID}.timer"
         if [ -f "/etc/systemd/system/${timer}" ]; then
             systemctl enable --now "$timer" || warn "${timer} enable 失敗"
         fi
+        systemctl disable --now "${unit}.timer" >/dev/null 2>&1 || true
+        systemctl disable --now "${unit}.service" >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/${unit}.timer" "/etc/systemd/system/${unit}.service"
     done
+    systemctl daemon-reload
     ok "timer enable 完了"
 }
 

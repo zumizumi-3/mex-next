@@ -97,8 +97,12 @@ function makePoster(): DiscordPosterImpl {
 
 function makeBridge(): BridgeLlmProvider {
   return {
-    call: vi.fn(async () => ({
-      text: JSON.stringify({ level: 'low_risk', reason: 'ok', draft: 'reply' }),
+    call: vi.fn(async (input) => ({
+      text: JSON.stringify(
+        input.kind === 'quote_v2_generate'
+          ? { mode: 'quote', text: 'quote draft', rationale: 'ok' }
+          : { level: 'low_risk', reason: 'ok', draft: 'reply' },
+      ),
       usage: { input: 0, output: 0 },
     })),
   };
@@ -108,6 +112,7 @@ interface XApiMockOpts {
   mentions?: MentionEvent[];
   search?: TweetEvent[];
   userTweets?: TweetEvent[];
+  targetTweets?: TweetEvent[];
   failMentions?: boolean;
   failSearch?: boolean;
   /** Fail tracked target lookups (collectTargetActivity). */
@@ -135,7 +140,7 @@ function makeXApi(opts: XApiMockOpts = {}): XApiSurface {
       if (opts.failTargetLookup && userId.startsWith('u-target-')) {
         throw new Error('target user_tweets boom');
       }
-      return opts.userTweets ?? [];
+      return userId === 'u-self' ? (opts.userTweets ?? []) : (opts.targetTweets ?? []);
     }),
     getUserByHandle: vi.fn(async (handle: string) => {
       if (opts.failSelfLookup && handle === 'zumi_x') {
@@ -153,29 +158,53 @@ function makeXApi(opts: XApiMockOpts = {}): XApiSurface {
 }
 
 describe('runReactionsPoll', () => {
-  it('全 collector が呼ばれ、それぞれの結果が返る', async () => {
+  it('reply + quote + target collector が呼ばれ、それぞれの結果が返る', async () => {
     await seedRepo();
     const xApi = makeXApi({
-      mentions: [],
-      search: [],
+      mentions: [
+        {
+          id: 'm-1',
+          text: '@zumi_x hello',
+          author: { id: 'u-mention', handle: 'alice' },
+          createdAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+      search: [
+        {
+          id: 'q-1',
+          text: 'quoted',
+          authorId: 'u-quote',
+          createdAt: '2026-01-01T00:00:00Z',
+          referencedTweetId: 't-1',
+          referencedTweetType: 'quoted',
+        },
+      ],
       userTweets: [{ id: 't-1', text: 'self', authorId: 'u-self', createdAt: '' }],
     });
+    const bridge = makeBridge();
+    const poster = makePoster();
 
     const outcome = await runReactionsPoll({
       config: makeConfig(),
       repo,
       xApi,
-      bridge: makeBridge(),
-      poster: makePoster(),
+      bridge,
+      poster,
       logger: makeLogger(),
     });
 
-    // 3 collector all succeed (no items to process, but no error)
+    // 3 collector all succeed, and reply + quote both post customer cards.
     expect(outcome.allFailed).toBe(false);
     expect(outcome.inboundReply.ok).toBe(true);
     expect(outcome.inboundQuote.ok).toBe(true);
     expect(outcome.targetActivity.ok).toBe(true);
     expect(xApi.getMentions).toHaveBeenCalled();
+    expect(xApi.searchRecent).toHaveBeenCalled();
+    expect(poster.postThread).toHaveBeenCalledTimes(2);
+    expect(bridge.call).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'inbound_risk_classify' }),
+    );
+    expect(bridge.call).toHaveBeenCalledWith(expect.objectContaining({ kind: 'quote_v2_generate' }));
   });
 
   it('1 collector が失敗しても他は続行する (anyFailed=true, allFailed=false)', async () => {

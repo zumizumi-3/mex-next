@@ -1,9 +1,9 @@
 [Unit]
-Description=Timer for MeX Next inbound reactions poll ({ACCOUNT_ID})
+Description=Timer for MeX Next inbound reactions/replies/quotes poll ({ACCOUNT_ID})
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=30min
+OnUnitActiveSec=15min
 RandomizedDelaySec=15
 Unit=mex-reactions-poll-{ACCOUNT_ID}.service
 

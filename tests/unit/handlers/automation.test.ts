@@ -30,6 +30,23 @@ describe('handleAutomationEnableAll', () => {
         account_id: 'zumi-x',
         approval_policy: { publish_requires_approval: true, reply_requires_approval: true },
       },
+      state: {
+        account_id: 'zumi-x',
+        current_phase: 'needs_diagnosis',
+        publish_queue: [
+          {
+            publish_id: 'p_held',
+            content_id: 'c1',
+            variant: 'primary',
+            scheduled_at: '2026-05-02T07:00:00Z',
+            status: 'held',
+            queued_at: '2026-05-01T00:00:00Z',
+            executed_at: '',
+            last_error: 'automation paused',
+            text_prefix: 'held body',
+          },
+        ],
+      },
     });
     const ctx = {
       ...scaf.ctx,
@@ -43,6 +60,11 @@ describe('handleAutomationEnableAll', () => {
     };
     expect(persisted.approval_policy.publish_requires_approval).toBe(false);
     expect(persisted.approval_policy.reply_requires_approval).toBe(false);
+    const state = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
+      publish_queue: Array<Record<string, unknown>>;
+    };
+    expect(state.publish_queue[0]?.status).toBe('scheduled');
+    expect(state.publish_queue[0]?.last_error).toBe('');
   });
 
   it('non-operator は拒否され、approval_policy は変更されない', async () => {

@@ -423,6 +423,10 @@ EOF
         "mex-weekly-retro"
         "mex-reactions-poll"
         "mex-publish"
+        "mex-morning-digest"
+        "mex-self-check"
+        "mex-phase-questionnaire-monthly"
+        "mex-phase-questionnaire-weekly"
     )
     for base in "${timers[@]}"; do
         local svc_src="${DEPLOY_DIR}/timers/${base}.service.template"
@@ -450,12 +454,18 @@ step_enable() {
     systemctl enable --now mex-bot.service       || warn "mex-bot.service enable 失敗"
     systemctl enable --now mex-self-update.timer || warn "mex-self-update.timer enable 失敗"
 
-    for base in mex-daily mex-weekly-retro mex-reactions-poll mex-publish; do
+    for base in mex-daily mex-weekly-retro mex-reactions-poll mex-publish \
+                mex-morning-digest mex-self-check \
+                mex-phase-questionnaire-monthly mex-phase-questionnaire-weekly; do
         local unit="${base}-${ACCOUNT_ID}.timer"
         if [ -f "/etc/systemd/system/${unit}" ]; then
             systemctl enable --now "${unit}" || warn "${unit} enable 失敗"
         fi
+        systemctl disable --now "${base}.timer" >/dev/null 2>&1 || true
+        systemctl disable --now "${base}.service" >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/${base}.timer" "/etc/systemd/system/${base}.service"
     done
+    systemctl daemon-reload
 
     # accounts-registry に登録 (setup-discord で書かれてる想定だが、無ければ touch)
     if [ ! -f "${MEX_VAR_LIB}/accounts-registry.json" ]; then

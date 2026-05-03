@@ -3,7 +3,7 @@ Description=Timer for MeX Next monthly phase questionnaire ({ACCOUNT_ID})
 
 [Timer]
 OnCalendar=*-*-01 09:00:00 Asia/Tokyo
-RandomizedDelaySec=300
+RandomizedDelaySec=15min
 Persistent=true
 Unit=mex-phase-questionnaire-monthly-{ACCOUNT_ID}.service
 

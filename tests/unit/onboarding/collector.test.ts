@@ -86,6 +86,56 @@ async function runFullWizard(collector: OnboardingCollector, sessionId: string):
 }
 
 describe('OnboardingCollector — round-trip', () => {
+  it('start marks saved account fields as pending_review_questions', async () => {
+    scaf = await makeScaffold();
+    const collector = new OnboardingCollector({
+      repo: scaf.repo,
+      bridge: scaf.bridge,
+      logger,
+    });
+
+    const session = await collector.start();
+
+    expect(session.pending_review_questions.map((q) => q.id)).toContain('display_name');
+    expect(session.pending_review_questions.find((q) => q.id === 'display_name')?.savedValue).toBe(
+      'zumi',
+    );
+  });
+
+  it('keepCurrentReviewAnswer keeps the saved value and advances', async () => {
+    scaf = await makeScaffold();
+    const collector = new OnboardingCollector({
+      repo: scaf.repo,
+      bridge: scaf.bridge,
+      logger,
+    });
+
+    const session = await collector.start();
+    const updated = await collector.keepCurrentReviewAnswer(session.id);
+
+    expect(updated.currentQuestionId).toBe('x_handle');
+    expect(updated.answers.display_name).toBe('zumi');
+    expect(updated.pending_review_questions.map((q) => q.id)).not.toContain('display_name');
+  });
+
+  it('changeCurrentReviewAnswer returns the saved question to normal flow', async () => {
+    scaf = await makeScaffold();
+    const collector = new OnboardingCollector({
+      repo: scaf.repo,
+      bridge: scaf.bridge,
+      logger,
+    });
+
+    const session = await collector.start();
+    const reviewOff = await collector.changeCurrentReviewAnswer(session.id);
+    expect(reviewOff.currentQuestionId).toBe('display_name');
+    expect(reviewOff.pending_review_questions.map((q) => q.id)).not.toContain('display_name');
+
+    const updated = await collector.answerCurrent(session.id, '新しい表示名');
+    expect(updated.currentQuestionId).toBe('x_handle');
+    expect(updated.answers.display_name).toBe('新しい表示名');
+  });
+
   it('start → answerCurrent (×N) → finalize updates account.json', async () => {
     scaf = await makeScaffold();
     const collector = new OnboardingCollector({

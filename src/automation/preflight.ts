@@ -98,7 +98,7 @@ export async function runPreflight(opts: RunPreflightOpts): Promise<PreflightRes
     }),
   );
   gates.push(gateDiscordBotTokenPresent(opts.config));
-  gates.push(gateAnthropicApiKeyPresent(opts.config));
+  gates.push(await gateLlmProviderConfigured(opts.config, ctx.runner));
   gates.push(gateXApiCredentialsPresent(opts.config));
   gates.push(await gateDiskSpaceOk(opts.config.accountRepo, ctx.diskCheck));
   gates.push(await gateDopplerTokenAlive(ctx.runner));
@@ -359,23 +359,63 @@ function gateDiscordBotTokenPresent(config: AppConfig): GateResult {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4: ANTHROPIC_API_KEY present
+// Gate 5: LLM provider configured
 // ---------------------------------------------------------------------------
 
-function gateAnthropicApiKeyPresent(config: AppConfig): GateResult {
+async function gateLlmProviderConfigured(
+  config: AppConfig,
+  runner: CommandRunner,
+): Promise<GateResult> {
   if (config.anthropicApiKey && config.anthropicApiKey.length > 0) {
     return {
       name: 'anthropic_api_key_present',
       status: 'pass',
-      message: 'ANTHROPIC_API_KEY ok',
+      message: 'LLM provider ok: anthropic_api_key',
     };
   }
+
+  if (config.llmBackend === 'claude_code' || config.llmBackend === 'codex') {
+    return {
+      name: 'anthropic_api_key_present',
+      status: 'pass',
+      message: `LLM provider ok: ${config.llmBackend}`,
+    };
+  }
+
+  if (config.llmBackend === 'auto') {
+    const [claudeAvailable, codexAvailable] = await Promise.all([
+      isCliAvailable(runner, 'claude'),
+      isCliAvailable(runner, 'codex'),
+    ]);
+    if (claudeAvailable || codexAvailable) {
+      const providers = [
+        claudeAvailable ? 'claude_code' : '',
+        codexAvailable ? 'codex' : '',
+      ].filter(Boolean);
+      return {
+        name: 'anthropic_api_key_present',
+        status: 'pass',
+        message: `LLM provider ok: ${providers.join(', ')}`,
+      };
+    }
+  }
+
   return {
     name: 'anthropic_api_key_present',
     status: 'fail',
-    message: 'ANTHROPIC_API_KEY が空',
-    hint: 'Anthropic console から発行して Doppler に登録',
+    message:
+      'LLM provider が 1 つも構成されていません。Claude Code subscription / Codex CLI / Anthropic API key のいずれかを用意してください',
+    hint: 'claude login / codex login / ANTHROPIC_API_KEY のいずれかを設定',
   };
+}
+
+async function isCliAvailable(runner: CommandRunner, binary: 'claude' | 'codex'): Promise<boolean> {
+  try {
+    const result = await runner(binary, ['--version']);
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

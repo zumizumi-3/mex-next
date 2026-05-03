@@ -18,6 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type { Logger } from 'pino';
 import type { LlmProvider } from '../llm/bridge.js';
 import type { AccountRepo } from '../account-state/repo.js';
@@ -62,6 +63,15 @@ export interface OnboardingSession {
   readonly expiresAt: string;
   readonly threadId?: string | null;
   readonly channelId?: string | null;
+  readonly pending_review_questions: ReadonlyArray<ResolvedQuestion>;
+}
+
+export interface ResolvedQuestion {
+  readonly id: string;
+  readonly accountFieldPath: string;
+  readonly question: OnboardingQuestion;
+  readonly savedValue: unknown;
+  readonly savedValueText: string;
 }
 
 export interface OnboardingFinalizeResult {
@@ -103,23 +113,43 @@ export class OnboardingCollector {
     this.newId = opts.idGenerator ?? randomUUID;
   }
 
+  private async readRawAccountObject(): Promise<Record<string, unknown>> {
+    try {
+      const text = await readFile(this.repo.accountPath, 'utf-8');
+      const parsed = JSON.parse(text) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch (error) {
+      this.logger.debug?.(
+        { error: error instanceof Error ? error.message : String(error) },
+        'onboarding_account_raw_read_failed',
+      );
+      return {};
+    }
+  }
+
   /**
    * Create a fresh session and seed it with the first question. If an
    * active session already exists it is returned as-is (no double-start).
    */
   async start(opts: StartOptions = {}): Promise<OnboardingSession> {
+    const accountRaw = await this.readRawAccountObject();
     return this.repo.withState(async (state) => {
       const live = activeSessionFromState(state, this.now());
       if (live) {
         return { state, result: toPublic(live) };
       }
       const first = firstQuestion();
+      const pendingReviewQuestions = resolvePendingReviewQuestions(accountRaw);
       const nowMs = this.now();
       const newSession: OnboardingSessionJson = {
         id: `onb_${this.newId().slice(0, 12)}`,
         state: 'asking',
         current_question_id: first.id,
         answers: {},
+        pending_review_questions: pendingReviewQuestions,
+        pending_review_question_ids: pendingReviewQuestions.map((q) => q.id),
         created_at: new Date(nowMs).toISOString(),
         updated_at: new Date(nowMs).toISOString(),
         expires_at: new Date(nowMs + ONBOARDING_SESSION_TTL_MS).toISOString(),
@@ -189,6 +219,9 @@ export class OnboardingCollector {
         ...session.answers,
         [currentId]: validated,
       };
+      const nextPendingReviewQuestions = pendingReviewQuestionsOf(session).filter(
+        (q) => q.id !== currentId,
+      );
 
       const upcoming = nextQuestion(currentId);
       const nowMs = this.now();
@@ -196,6 +229,8 @@ export class OnboardingCollector {
         ? {
             ...session,
             answers: nextAnswers,
+            pending_review_questions: nextPendingReviewQuestions,
+            pending_review_question_ids: nextPendingReviewQuestions.map((q) => q.id),
             current_question_id: upcoming.id,
             state: 'asking',
             updated_at: new Date(nowMs).toISOString(),
@@ -203,6 +238,8 @@ export class OnboardingCollector {
         : {
             ...session,
             answers: nextAnswers,
+            pending_review_questions: nextPendingReviewQuestions,
+            pending_review_question_ids: nextPendingReviewQuestions.map((q) => q.id),
             current_question_id: '',
             state: 'completed',
             updated_at: new Date(nowMs).toISOString(),
@@ -243,6 +280,66 @@ export class OnboardingCollector {
       return null;
     }
     return findQuestionById(session.current_question_id) ?? null;
+  }
+
+  /**
+   * Keep the saved account.json value for the current review question
+   * and advance through the same validation path as a normal answer.
+   */
+  async keepCurrentReviewAnswer(sessionId: string): Promise<OnboardingSession> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new OnboardingError(`session not found: ${sessionId}`);
+    }
+    const question = findQuestionById(session.currentQuestionId);
+    if (!question) {
+      throw new OnboardingError(`unknown question id ${session.currentQuestionId}`);
+    }
+    const pending = pendingReviewForPublicSession(session, question.id);
+    if (!pending) {
+      throw new OnboardingError(`question is not pending review: ${question.id}`);
+    }
+    return this.answerCurrent(sessionId, savedValueToAnswer(question, pending.savedValue));
+  }
+
+  /**
+   * Switch the current review question back to normal answer mode.
+   * The question does not advance; the next free-form reply replaces
+   * the saved value.
+   */
+  async changeCurrentReviewAnswer(sessionId: string): Promise<OnboardingSession> {
+    return this.repo.withState(async (state) => {
+      const session = findSession(state, sessionId);
+      if (!session) {
+        throw new OnboardingError(`session not found: ${sessionId}`);
+      }
+      if (
+        session.state === 'completed' ||
+        session.state === 'cancelled' ||
+        session.state === 'expired'
+      ) {
+        throw new OnboardingError(
+          `session ${sessionId} is already in terminal state ${session.state}`,
+        );
+      }
+      const currentId = session.current_question_id;
+      const nextPendingReviewQuestions = pendingReviewQuestionsOf(session).filter(
+        (q) => q.id !== currentId,
+      );
+      const nextSession: OnboardingSessionJson = {
+        ...session,
+        pending_review_questions: nextPendingReviewQuestions,
+        pending_review_question_ids: nextPendingReviewQuestions.map((q) => q.id),
+        updated_at: new Date(this.now()).toISOString(),
+      };
+      return {
+        state: {
+          ...state,
+          onboarding_sessions: replaceSession(state.onboarding_sessions ?? [], nextSession),
+        },
+        result: toPublic(nextSession),
+      };
+    });
   }
 
   /**
@@ -368,7 +465,50 @@ function toPublic(session: OnboardingSessionJson): OnboardingSession {
     expiresAt: session.expires_at,
     threadId: session.thread_id ?? null,
     channelId: session.channel_id ?? null,
+    pending_review_questions: pendingReviewQuestionsOf(session),
   };
+}
+
+function pendingReviewQuestionsOf(session: OnboardingSessionJson): ResolvedQuestion[] {
+  const raw = (session as unknown as { pending_review_questions?: unknown }).pending_review_questions;
+  if (!Array.isArray(raw)) return [];
+  const out: ResolvedQuestion[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const id = typeof rec.id === 'string' ? rec.id : '';
+    const question = findQuestionById(id);
+    const accountFieldPath =
+      typeof rec.accountFieldPath === 'string'
+        ? rec.accountFieldPath
+        : typeof rec.account_field_path === 'string'
+          ? rec.account_field_path
+          : question?.accountFieldPath;
+    if (!id || !question || !accountFieldPath) continue;
+    const savedValue = rec.savedValue ?? rec.saved_value;
+    const savedValueText =
+      typeof rec.savedValueText === 'string'
+        ? rec.savedValueText
+        : typeof rec.saved_value_text === 'string'
+          ? rec.saved_value_text
+          : savedValueToText(savedValue);
+    out.push({ id, accountFieldPath, question, savedValue, savedValueText });
+  }
+  return out;
+}
+
+function pendingReviewForPublicSession(
+  session: OnboardingSession,
+  questionId: string,
+): ResolvedQuestion | null {
+  return session.pending_review_questions.find((q) => q.id === questionId) ?? null;
+}
+
+export function pendingReviewForQuestion(
+  session: OnboardingSession,
+  questionId: string,
+): ResolvedQuestion | null {
+  return pendingReviewForPublicSession(session, questionId);
 }
 
 /** Find the most-recent active session, taking expiry into account. */
@@ -422,6 +562,81 @@ function isExpired(session: OnboardingSessionJson, nowMs: number): boolean {
   const expiresMs = Date.parse(session.expires_at);
   if (Number.isNaN(expiresMs)) return false;
   return nowMs >= expiresMs;
+}
+
+function resolvePendingReviewQuestions(account: Record<string, unknown>): ResolvedQuestion[] {
+  const pending: ResolvedQuestion[] = [];
+  for (const question of ONBOARDING_QUESTIONS) {
+    if (!question.accountFieldPath) continue;
+    const savedValue = lookupPath(account, question.accountFieldPath);
+    if (!hasSavedValue(savedValue)) continue;
+    pending.push({
+      id: question.id,
+      accountFieldPath: question.accountFieldPath,
+      question,
+      savedValue,
+      savedValueText: savedValueToText(savedValue),
+    });
+  }
+  return pending;
+}
+
+function lookupPath(source: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = source;
+  for (const part of path.split('.')) {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return undefined;
+    cursor = (cursor as Record<string, unknown>)[part];
+  }
+  return cursor;
+}
+
+function hasSavedValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'boolean') return true;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return false;
+}
+
+function savedValueToAnswer(question: OnboardingQuestion, value: unknown): unknown {
+  if (question.type === 'multi-select' && Array.isArray(value)) {
+    return value;
+  }
+  if (question.type === 'number' && typeof value === 'number') {
+    return value;
+  }
+  if (question.type === 'select' && typeof value === 'string') {
+    return value;
+  }
+  return savedValueToText(value);
+}
+
+function savedValueToText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    const hotZones = value
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const rec = item as Record<string, unknown>;
+        const start = typeof rec.start === 'string' ? rec.start : '';
+        const end = typeof rec.end === 'string' ? rec.end : '';
+        return start && end ? `${start}-${end}` : null;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (hotZones.length === value.length && hotZones.length > 0) {
+      return hotZones.join(', ');
+    }
+    return value.map((item) => savedValueToText(item)).filter(Boolean).join(', ');
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 /**

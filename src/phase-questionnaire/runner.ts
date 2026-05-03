@@ -56,6 +56,7 @@ export interface PhaseQuestionnaireSession {
   questions: PhaseQuestion[];
   answers: Record<string, string>;
   threadId: string | null;
+  auto_chain_next: boolean;
   startedAt: string;
   completedAt: string | null;
   synthesis: PhaseSynthesis | null;
@@ -68,6 +69,7 @@ export interface StartPhaseQuestionnaireOptions {
   poster: DiscordPoster;
   cadence: PhaseCadence;
   logger?: Logger;
+  autoChainNext?: boolean;
 }
 
 export interface SubmitPhaseAnswersOptions {
@@ -187,6 +189,7 @@ export async function startPhaseQuestionnaire(
     questions,
     answers: {},
     threadId,
+    auto_chain_next: opts.autoChainNext ?? false,
     startedAt,
     completedAt: null,
     synthesis: null,
@@ -360,7 +363,7 @@ export async function submitPhaseAnswers(
   }
 
   // Step 2: persist the final state
-  return opts.repo.withState(async (state) => {
+  const finalized = await opts.repo.withState(async (state) => {
     const stateAny = state as unknown as Record<string, unknown>;
     const list = readSessions(stateAny);
     const current = list.find((s) => s.id === session.id);
@@ -376,6 +379,28 @@ export async function submitPhaseAnswers(
     };
     return { state: upsertSession(stateAny, updated) as typeof state, result: updated };
   });
+
+  if (finalized.status === 'completed' && finalized.auto_chain_next) {
+    const nextCadence = nextCadenceFor(finalized.cadence);
+    if (nextCadence) {
+      await startPhaseQuestionnaire({
+        repo: opts.repo,
+        bridge: opts.bridge,
+        poster: opts.poster,
+        cadence: nextCadence,
+        logger: opts.logger,
+        autoChainNext: true,
+      });
+    }
+  }
+
+  return finalized;
+}
+
+function nextCadenceFor(cadence: PhaseCadence): PhaseCadence | null {
+  if (cadence === 'quarterly') return 'monthly';
+  if (cadence === 'monthly') return 'weekly';
+  return null;
 }
 
 /**

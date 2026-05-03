@@ -71,4 +71,34 @@ describe('handlePhaseQuestionnaireSubmit', () => {
     expect(result.tag).toBe('phase.questionnaire_submit');
     expect(result.content).toContain('満足度が高め');
   });
+
+  it('auto_chain_next=true の quarterly 完了後に monthly を開始する', async () => {
+    scaf = await setupHandlerTest({
+      llmReplies: {
+        phase_questionnaire_synthesize: SYNTH_REPLY,
+      },
+    });
+    const { startPhaseQuestionnaire, submitPhaseAnswers, listPhaseQuestionnaireSessions } =
+      await import('../../../src/phase-questionnaire/runner.js');
+    const started = await startPhaseQuestionnaire({
+      repo: scaf.ctx.repo,
+      bridge: scaf.ctx.bridge,
+      poster: scaf.ctx.discordPoster,
+      cadence: 'quarterly',
+      logger: scaf.ctx.logger,
+      autoChainNext: true,
+    });
+
+    await submitPhaseAnswers({
+      repo: scaf.ctx.repo,
+      bridge: scaf.ctx.bridge,
+      poster: scaf.ctx.discordPoster,
+      sessionId: started.id,
+      answers: { quarterly_goal: '伸ばす' },
+      logger: scaf.ctx.logger,
+    });
+    const sessions = await listPhaseQuestionnaireSessions(scaf.ctx.repo);
+
+    expect(sessions.some((s) => s.cadence === 'monthly' && s.auto_chain_next)).toBe(true);
+  });
 });

@@ -5,6 +5,7 @@ import {
   enqueuePublish,
   markFailed,
   markPublished,
+  releaseHeldPublishItems,
   reschedulePublish,
 } from '../../../src/posting/queue.js';
 import { InMemoryAccountRepo } from '../fixtures/in-memory-repo.js';
@@ -139,6 +140,40 @@ describe('dueItems', () => {
       (q) => q.publish_id === 'p_stale',
     );
     expect(persisted?.status).toBe('failed_terminal');
+  });
+});
+
+describe('releaseHeldPublishItems', () => {
+  it('held items return to scheduled while dueItems remains scheduled-only', async () => {
+    const now = new Date('2026-05-02T08:00:00Z');
+    const repo = new InMemoryAccountRepo({
+      state: {
+        publish_queue: [
+          item({
+            publish_id: 'p_held',
+            scheduled_at: '2026-05-02T07:00:00Z',
+            status: 'held',
+            last_error: 'automation paused',
+          }),
+          item({
+            publish_id: 'p_scheduled',
+            scheduled_at: '2026-05-02T07:30:00Z',
+            status: 'scheduled',
+          }),
+        ],
+      },
+    });
+
+    const beforeRelease = await dueItems({ repo, now });
+    expect(beforeRelease.due.map((d) => d.publish_id)).toEqual(['p_scheduled']);
+
+    const released = await releaseHeldPublishItems({ repo });
+    expect(released.map((d) => d.publish_id)).toEqual(['p_held']);
+    expect(released[0]!.status).toBe('scheduled');
+    expect(released[0]!.last_error).toBe('');
+
+    const afterRelease = await dueItems({ repo, now });
+    expect(afterRelease.due.map((d) => d.publish_id)).toEqual(['p_held', 'p_scheduled']);
   });
 });
 

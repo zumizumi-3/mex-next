@@ -106,7 +106,10 @@ step_stop_python() {
     systemctl stop mex-bot.service 2>/dev/null && ok "mex-bot.service stopped" || warn "mex-bot.service stop skip"
     systemctl stop mex-self-update.timer 2>/dev/null || true
     for unit in "mex-daily-${ACCOUNT_ID}" "mex-weekly-retro-${ACCOUNT_ID}" \
-                "mex-reactions-poll-${ACCOUNT_ID}" "mex-publish-${ACCOUNT_ID}"; do
+                "mex-reactions-poll-${ACCOUNT_ID}" "mex-publish-${ACCOUNT_ID}" \
+                "mex-morning-digest-${ACCOUNT_ID}" "mex-self-check-${ACCOUNT_ID}" \
+                "mex-phase-questionnaire-monthly-${ACCOUNT_ID}" \
+                "mex-phase-questionnaire-weekly-${ACCOUNT_ID}"; do
         systemctl stop "${unit}.timer" 2>/dev/null || true
         systemctl disable "${unit}.timer" 2>/dev/null || true
     done
@@ -356,12 +359,16 @@ step_systemd() {
     cp "$MEX_NEXT_DIR/deploy/mex-self-update.timer" /etc/systemd/system/mex-self-update.timer
 
     for unit in mex-daily mex-weekly-retro mex-reactions-poll mex-publish \
-                mex-morning-digest mex-self-check mex-phase-questionnaire-monthly; do
+                mex-morning-digest mex-self-check \
+                mex-phase-questionnaire-monthly mex-phase-questionnaire-weekly; do
         local svc_tmpl="$MEX_NEXT_DIR/deploy/timers/${unit}.service.template"
         local timer_tmpl="$MEX_NEXT_DIR/deploy/timers/${unit}.timer.template"
         [ -f "$svc_tmpl" ] || { warn "${unit}.service.template が無い、skip"; continue; }
-        install_unit "$svc_tmpl" "/etc/systemd/system/${unit}.service"
-        install_unit "$timer_tmpl" "/etc/systemd/system/${unit}.timer"
+        install_unit "$svc_tmpl" "/etc/systemd/system/${unit}-${ACCOUNT_ID}.service"
+        install_unit "$timer_tmpl" "/etc/systemd/system/${unit}-${ACCOUNT_ID}.timer"
+        systemctl disable --now "${unit}.timer" >/dev/null 2>&1 || true
+        systemctl disable --now "${unit}.service" >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/${unit}.service" "/etc/systemd/system/${unit}.timer"
     done
 
     systemctl daemon-reload
@@ -413,11 +420,13 @@ step_start() {
     fi
     ok "mex-bot.service active"
 
-    for unit in mex-self-update mex-self-check mex-daily mex-weekly-retro \
+    systemctl enable --now mex-self-update.timer || warn "mex-self-update.timer enable 失敗"
+    for unit in mex-self-check mex-daily mex-weekly-retro \
                 mex-reactions-poll mex-publish mex-morning-digest \
-                mex-phase-questionnaire-monthly; do
-        if [ -f "/etc/systemd/system/${unit}.timer" ]; then
-            systemctl enable --now "${unit}.timer" || warn "${unit}.timer enable 失敗"
+                mex-phase-questionnaire-monthly mex-phase-questionnaire-weekly; do
+        local timer="${unit}-${ACCOUNT_ID}.timer"
+        if [ -f "/etc/systemd/system/${timer}" ]; then
+            systemctl enable --now "${timer}" || warn "${timer} enable 失敗"
         fi
     done
 

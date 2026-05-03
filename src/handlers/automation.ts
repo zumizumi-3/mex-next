@@ -11,6 +11,8 @@
 import type { HandlerContext, HandlerResult, HandlerArgs } from './types.js';
 import { isOperator } from './system.js';
 import { STATE_EMOJI } from '../discord/templates.js';
+import { releaseHeldPublishItems } from '../posting/queue.js';
+import { asPostingRepo } from './repo-adapter.js';
 
 const GATES = [
   'publish_requires_approval',
@@ -53,8 +55,9 @@ export async function handleAutomationEnableAll(
   }
   const next = { ...account, approval_policy: policy } as typeof account;
   await ctx.repo.saveAccount(next);
+  const released = await releaseHeldPublishItems({ repo: asPostingRepo(ctx.repo) });
   return {
-    content: `${STATE_EMOJI.ok} 自動運用を一括 ON にしました (5 gate を auto に切替).`,
+    content: `${STATE_EMOJI.ok} 自動運用を一括 ON にしました (5 gate を auto に切替 / held ${released.length} 件を scheduled に復帰).`,
     tag: 'automation.enable_all',
   };
 }
