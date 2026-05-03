@@ -71,9 +71,9 @@ src/
 ├── config.ts                # env / Doppler / argv
 ├── account-state/           # repo I/O, zod schema, migration
 ├── automation/              # preflight, escalation
-├── conversation/            # turn-orchestrator, intent-router, locks, sessions
+├── conversation/            # turn-orchestrator, agent-loop runner, legacy fallback, locks
 ├── discord/                 # message-handler, interactions, approvals, threads
-├── llm/                     # bridge (anthropic + claude-code), prompts, kinds
+├── llm/                     # bridge (anthropic + claude-code + codex), prompts, kinds
 ├── observability/           # structured logger
 ├── posting/                 # state-machine, scheduler, dedup, retrospective, edit-diff
 ├── settings/                # cadence, skip

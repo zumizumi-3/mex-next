@@ -225,7 +225,9 @@ describe('runAgentLoop', () => {
         logger: pino({ level: 'silent' }),
       });
 
-      expect(result.reply).toContain('承認済み');
+      // agent loop は handler の content (= '✅ 6 件取り消しました') を
+      // reply にする (parsed.reply は捨てる) ので、handler 出力を assert。
+      expect(result.reply).toBe('✅ 6 件取り消しました');
       expect(result.awaitingApproval).toBeUndefined();
       expect(handler).toHaveBeenCalledTimes(1);
       expect(result.trace[0]).toMatchObject({

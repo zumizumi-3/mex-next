@@ -107,7 +107,7 @@ Discord の server。1 顧客 1 guild が原則。
 半期の柱。account.json#half_focus。half retrospective の writeback 対象。
 
 **handle**
-X (Twitter) の username。`@` なし、英数 + `_`。intent-router の normalizeHandle で正規化。
+X (Twitter) の username。`@` なし、英数 + `_`。agent loop tool input / legacy intent-router で正規化。
 
 **horizon**
 retrospective の単位。`daily` / `weekly` / `monthly` / `quarterly` / `half`。
@@ -117,11 +117,14 @@ cadence profile に紐づく投稿可能な時間帯。`{ start: "06:00", end: "
 
 ## I
 
+**agent_turn**
+LLM kind の 1 つ。agent loop の primary call。state snapshot + tool catalog を渡し、JSON schema 付きで reply / tool_call / needs_confirmation を返す。
+
 **intent**
-自然文 → 構造化 intent 名 (例: `schedule.list`)。`src/conversation/intent-router.ts` の IntentName union を参照。
+legacy fallback の自然文分類名 (例: `schedule.list`)。primary path は `src/llm/agent-loop.ts` の tool catalog を使う。
 
 **intent_classify**
-LLM kind の 1 つ。anthropic provider 直接、prompt cache ON、timeout 8s。
+LLM kind の 1 つ。legacy intent-router fallback 用。anthropic provider 直接、prompt cache ON、timeout 8s。
 
 **inbound reaction**
 受信した reply / quote / mention / 影響大 retweet。state.inbound_reaction_sessions に保存。
@@ -137,7 +140,7 @@ Japan Standard Time (UTC+9)。`src/utils/jst.ts` に helper。timer の発火時
 ## K
 
 **kind (LlmKind)**
-LLM 呼出の分類タグ。13 種類。`src/llm/kinds.ts` 参照。
+LLM 呼出の分類タグ。`agent_turn` を含む全 kind は `src/llm/kinds.ts` 参照。
 
 ## L
 
@@ -145,7 +148,7 @@ LLM 呼出の分類タグ。13 種類。`src/llm/kinds.ts` 参照。
 1 日 1 本、朝 06:00-09:00 JST のみ。default profile。
 
 **LlmProvider**
-LLM 呼出の interface。anthropic-provider と claude-code-provider の 2 実装。
+LLM 呼出の interface。anthropic-provider / claude-code-provider / codex-cli-provider の 3 実装。
 
 ## M
 
@@ -159,13 +162,22 @@ systemd unit。Long-running bot プロセス。
 5min interval、publish_queue を drain。
 
 **mex-reactions-poll-<id>.timer**
-30min interval、X API poll。
+15min interval、X API poll。
 
 **mex-self-update.timer**
 30min interval、git pull + build + restart。
 
 **mex-weekly-retro-<id>.timer**
 月曜 07:00 JST 発火の weekly retrospective timer。
+
+**mex-phase-questionnaire-weekly-<id>.timer**
+月曜 09:00 JST 発火の weekly phase questionnaire timer。
+
+**mex-phase-questionnaire-monthly-<id>.timer**
+月初 09:00 JST 発火の monthly phase questionnaire timer。
+
+**mex-proactive-nudge-<kind>-<id>.timer**
+weekly / monthly / stale-target / unanswered-phase の proactive nudge timer。
 
 ## O
 
@@ -284,7 +296,7 @@ X API client npm package。bot で使用。
 ## U
 
 **unknown intent**
-LLM の intent classify が失敗した時の fallback。顧客向け固定メッセージで吸収。
+legacy intent classify が失敗した時の fallback。顧客向け固定メッセージで吸収。
 
 ## V
 

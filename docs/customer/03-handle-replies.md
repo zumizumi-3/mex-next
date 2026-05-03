@@ -4,13 +4,13 @@
 > **前提**: 朝の draft フローを 1 週間以上回した
 > **読了時間**: 約 6 分
 
-MeX Next は X API を 30 分ごとに poll して、あなたへの reply / quote / mention / 影響の大きい retweet を回収します。**全部にあなたが目を通す必要はありません**。risk classifier が 3 段階に振り分け、応答のドラフトまで bot が用意します。
+MeX Next は X API を 30 分ごとに確認して、あなたへの reply / quote / mention / 影響の大きい retweet を回収します。**全部にあなたが目を通す必要はありません**。bot が安全度を 3 段階に振り分け、応答の下書きまで用意します。
 
 ## 1. risk 分類
 
 ```mermaid
 flowchart LR
-    A[X API で受信] --> B[LLM risk classify]
+    A[X で受信] --> B[安全度を判定]
     B -->|low_risk| C[customer thread に通知]
     B -->|medium_risk| D[operator に escalate + 顧客に notice]
     B -->|high_risk| E[operator only + 本文非表示で notice]
@@ -53,7 +53,7 @@ bot:    📝 reply (rev 2)
 bot:    ✅ 返信を送りました (12:34 publish)
 ```
 
-「下のやつ」「上のやつ」「最初のやつ」のような指示語は intent-router が context と一緒に解釈します。
+「下のやつ」「上のやつ」「最初のやつ」のような指示語も、直前の会話を見て bot が解釈します。
 
 ## 4. 引用された時 ([QREV])
 

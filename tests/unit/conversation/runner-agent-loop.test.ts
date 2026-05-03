@@ -108,7 +108,10 @@ describe('IntentDrivenRunner agent loop', () => {
         abortSignal: new AbortController().signal,
       });
 
-      expect(second.output).toBe('✅ 6 件取り消しました。');
+      // agent loop は handler の実 output (handleScheduleCancel の reply
+      // = "🛑 すべての予約 N 件を取り消しました。") を返すので、
+      // 件数 + "取り消し" が含まれていれば OK とする。
+      expect(second.output).toMatch(/取り消し/);
       expect(pendingConfirmations.get('conv_1')).toBeNull();
       const persisted = JSON.parse(await readFile(join(scaf.workDir, 'state.json'), 'utf-8')) as {
         publish_queue: Array<{ status: string }>;

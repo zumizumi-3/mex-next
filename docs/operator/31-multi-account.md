@@ -11,11 +11,13 @@
 ```text
 customer-a VPS
 ├── mex-bot.service
+├── mex-publish-customer-a.timer
 ├── mex-daily-customer-a.timer
 └── /srv/mex-next/customer-a-x-ops
 
 customer-b VPS
 ├── mex-bot.service
+├── mex-publish-customer-b.timer
 ├── mex-daily-customer-b.timer
 └── /srv/mex-next/customer-b-x-ops
 ```
@@ -38,6 +40,8 @@ customer-b VPS
 /etc/systemd/system/
 ├── mex-bot-tanaka-x.service
 ├── mex-bot-suzuki-x.service
+├── mex-publish-tanaka-x.service
+├── mex-publish-tanaka-x.timer
 ├── mex-daily-tanaka-x.timer
 └── mex-daily-suzuki-x.timer
 ```
@@ -49,6 +53,20 @@ customer-b VPS
 - account repo は customer GitHub に置く
 - service / timer 名に account id を必ず入れる
 - `journalctl` を unit 単位で見る
+
+timer で起動する one-shot service は `scripts/install-systemd-units.sh <ACCOUNT_ID>` で生成する。unit 名は `mex-{name}-{ACCOUNT_ID}.service` / `.timer` に統一され、suffix なしの legacy unit は disable/remove される。
+
+```bash
+cd /opt/mex-next
+sudo bash scripts/install-systemd-units.sh tanaka-x
+sudo bash scripts/install-systemd-units.sh suzuki-x
+```
+
+配置前に見るだけなら:
+
+```bash
+bash scripts/install-systemd-units.sh tanaka-x --dry-run
+```
 
 ## 3. accounts-registry.json
 
@@ -91,6 +109,7 @@ registry は bot 起動や operator tooling が account metadata を引くため
 ```bash
 sudo journalctl -u mex-bot.service -f
 sudo journalctl -u mex-daily-tanaka-x.timer -n 100 --no-pager
+sudo journalctl -u mex-proactive-nudge-weekly-tanaka-x.service -n 100 --no-pager
 ```
 
 1 VPS 複数 customer:
@@ -103,7 +122,20 @@ sudo journalctl --since "1 hour ago" -u 'mex-*-tanaka-x.*'
 
 systemd unit 名に account id を入れておくと、customer 単位の切り分けができます。共通の `mex-bot.service` を複数 account で使い回すと journal が混ざるため避けます。
 
-## 5. 運用判断
+## 5. symlink / legacy unit 管理
+
+suffix 統一後は `/etc/systemd/system/multi-user.target.wants/` などの symlink も account id 付き timer を指す。手動で symlink を作らず、必ず `systemctl enable --now mex-<name>-<account>.timer` または `install-systemd-units.sh` に任せる。
+
+確認:
+
+```bash
+systemctl list-unit-files 'mex-*-tanaka-x.*'
+find /etc/systemd/system -lname '*mex-*' -maxdepth 2 -print
+```
+
+suffix なしの `mex-daily.timer` / `mex-publish.timer` が残っていたら disable/remove する。`install-systemd-units.sh` は dry-run でも削除予定の legacy unit を表示する。
+
+## 6. 運用判断
 
 customer をホストするなら 1 customer 1 VPS を標準にします。同居は operator 自身の account、検証環境、低リスクな小規模運用に限定します。
 

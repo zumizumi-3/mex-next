@@ -35,11 +35,13 @@ flowchart TB
     E --> F{conversation lock?}
     F -->|locked| G[queue 後で再試行]
     F -->|free| H[acquire lock]
-    H --> I[intent-router.classify]
-    I --> J{intent}
-    J -->|destructive| K[confirmation button]
-    J -->|display/safe| L[handler 実行]
-    K -->|button click| L
+    H --> I[agent-loop]
+    I --> J{reply / tool_call}
+    J -->|destructive tool| K[pending confirmation]
+    J -->|display/safe tool| L[handler 実行 or direct reply]
+    J -->|fallbackToLegacy| IR[intent-router fallback]
+    IR --> L
+    K -->|next turn: はい| L
     L --> M[release lock]
 ```
 
@@ -63,15 +65,20 @@ sequenceDiagram
     participant MH as message-handler
     participant TO as turn-orchestrator
     participant CL as conversation-locks
-    participant IR as intent-router
+    participant AL as agent-loop
+    participant IR as intent-router fallback
     participant H as handlers
     participant DP as DiscordPoster
     U->>MH: messageCreate
     MH->>TO: runTurn
     TO->>CL: acquire(userId)
-    TO->>IR: classifyIntent
-    IR-->>TO: intent + args
-    TO->>H: dispatch(intent)
+    TO->>AL: state snapshot + jsonSchema
+    AL-->>TO: reply + tool_call
+    alt fallbackToLegacy
+        TO->>IR: classifyIntent
+        IR-->>TO: intent + args
+    end
+    TO->>H: dispatch tool/intent
     H-->>TO: result
     TO->>DP: postMessage
     TO->>CL: release
@@ -85,7 +92,7 @@ const result = await turnOrchestrator.run({
   userText,
   handler: async (signal) => {
     // signal.aborted を時々チェックして cancel に応える
-    return await intentRouter.classify({ userText, ... });
+    return await runner.run({ userText, ... });
   },
 });
 ```
@@ -134,19 +141,19 @@ Discord の rate limit (5 edits / 5s) を内部で respect。
 
 ## 4. confirmation flow
 
-destructive intent には button confirmation を強制 (intent-router 側でも、この層でも保証)。
+destructive tool / legacy destructive intent には confirmation を強制する。現在の自然文 UX は `[はい] [いいえ]` button だけでなく、次 turn の「はい」「いいえ」も拾う。
 
 ```mermaid
 sequenceDiagram
     participant U as user
     participant Bot
-    participant Store as approval store
+    participant Store as pending-confirmation-store
     U->>Bot: 「今日いらない」
-    Bot->>Bot: intent classify
-    Bot->>Store: pendingApproval = {action: skip_today, expires: +120s}
-    Bot-->>U: 「全部取り消しますか？ [はい][いいえ]」
-    U->>Bot: button click [はい]
-    Bot->>Store: pop approval
+    Bot->>Bot: agent loop
+    Bot->>Store: kind=tool, pendingTool, expires=+5min
+    Bot-->>U: 「今日 N 件を取り消します。実行しますか？」
+    U->>Bot: 「はい」
+    Bot->>Store: pop pending
     alt 期限内
         Bot->>Bot: handler 実行
         Bot-->>U: ✅ 完了
@@ -155,7 +162,15 @@ sequenceDiagram
     end
 ```
 
-approval は in-memory (`Map<approvalId, { intent, args, expiresAt }>`)。120 秒で expire。
+pending confirmation は in-memory で、`conversationKey` ごとに 1 件だけ保持する。TTL は 5 分。
+
+```typescript
+type PendingConfirmation =
+  | { kind: 'legacy'; intent: IntentName; args: Record<string, unknown> }
+  | { kind: 'tool'; pendingTool: { name: string; input: Record<string, unknown> } };
+```
+
+`kind=tool` は agent loop の destructive tool、`kind=legacy` は intent-router fallback の destructive intent。restart で消えるが、破壊的操作が勝手に走らない方向なので安全。
 
 ## 5. thread lifecycle
 
@@ -201,7 +216,7 @@ restart 後の 1st message でも、session が紐づいているので適切な
 
 ## 7. judgment events (observability)
 
-判断の追跡用に「いつ・誰の・どんな intent が・どう処理されたか」を構造化 log する。
+判断の追跡用に「いつ・誰の・どんな agent/tool/intent が・どう処理されたか」を構造化 log する。
 
 ```typescript
 logger.info({
@@ -213,7 +228,7 @@ logger.info({
 });
 ```
 
-operator が `journalctl -o json | jq` で intent 系列の傾向を分析する用。
+agent loop が fallback した場合は judgment event `agent_loop_fallback` を出す。operator が `journalctl -o json | jq` で agent / intent 系列の傾向を分析する用。
 
 ## 8. operator allowlist
 
@@ -246,6 +261,7 @@ tests/unit では `InMemoryDiscordPoster` を使う。実 bot 起動は integrat
 
 ## 10. 関連 docs
 
+- [11-agent-loop.md](./11-agent-loop.md)
 - [11-intent-router.md](./11-intent-router.md)
 - [00-architecture.md](./00-architecture.md)
 - [50-testing.md](./50-testing.md)

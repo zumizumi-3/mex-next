@@ -190,8 +190,15 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     },
   ];
 
+  // Tool 実行成功時は handler の content (例: 「🟢 オンボーディングを開始しました
+  // / 最初の質問」のような長文) を reply にする。LLM が事前に出した
+  // parsed.reply は「実行します」程度の短文なので捨てて、handler が
+  // 顧客に提示したい完全な情報を伝える。失敗時は parsed.reply を error
+  // と一緒に表示。
   return {
-    reply: result.ok ? reply : `${reply}\n${result.error}`.trim(),
+    reply: result.ok
+      ? result.output.trim() || reply
+      : `${reply}\n${result.error}`.trim(),
     trace,
   };
 }

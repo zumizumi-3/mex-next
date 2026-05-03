@@ -16,7 +16,9 @@ flowchart TB
         TM[turn-orchestrator]
     end
     subgraph Core [core engine]
-        IR[intent-router]
+        AL[agent-loop]
+        SS[state snapshot builder]
+        IR[intent-router fallback]
         PSM[posting state machine]
         SCH[scheduler]
         DDP[dedup]
@@ -27,6 +29,7 @@ flowchart TB
     subgraph Bridge [LLM Bridge]
         ANT[anthropic SDK]
         CC[claude-code CLI]
+        CX[codex CLI]
     end
     subgraph Storage [account-state]
         AJ[account.json]
@@ -39,7 +42,11 @@ flowchart TB
     end
 
     DM --> TM
-    TM --> IR
+    TM --> AL
+    AL --> SS
+    AL -->|tool call| PSM
+    AL -->|tool call| SCH
+    AL -->|fallbackToLegacy| IR
     IR -->|intent + args| PSM
     IR -->|intent + args| SCH
     PSM --> Bridge
@@ -51,10 +58,13 @@ flowchart TB
     RS --> Bridge
     RS --> Storage
     PWB --> Bridge
+    AL --> Bridge
     PWB --> Storage
     AUTO --> Storage
     AUTO --> DM
     PSM --> X
+    SS --> Storage
+    SS --> X
 ```
 
 ## 2. Module 構成
@@ -75,8 +85,10 @@ src/
 │   └── escalation.ts             # operator notify pipeline
 ├── conversation/
 │   ├── turn-orchestrator.ts      # turn lock + cancel + recovery
-│   ├── intent-router.ts          # natural-language → intent
+│   ├── runner.ts                 # agent loop primary + legacy fallback dispatch
+│   ├── intent-router.ts          # legacy natural-language → intent fallback
 │   ├── conversation-locks.ts
+│   ├── pending-confirmation-store.ts # legacy/tool confirmation union
 │   ├── pending-turn-store.ts
 │   ├── session-store.ts
 │   └── turn-cancellation.ts
@@ -90,9 +102,12 @@ src/
 │   ├── thread-lifecycle.ts       # auto-archive + revive
 │   └── templates.ts              # card layouts
 ├── llm/
+│   ├── agent-loop.ts             # state snapshot + tool catalog → structured action
 │   ├── bridge.ts                 # provider router, timeout, retry
+│   ├── state-snapshot.ts         # read-only conversation context
 │   ├── anthropic-provider.ts
 │   ├── claude-code-provider.ts
+│   ├── codex-cli-provider.ts
 │   ├── kinds.ts                  # LlmKind ↔ provider/timeout/maxtokens
 │   ├── prompts.ts                # all system prompts
 │   └── types.ts
@@ -170,7 +185,38 @@ sequenceDiagram
     SM->>DC: ✅ publish 完了
 ```
 
-## 4. 依存関係
+## 4. 会話 primary path
+
+Discord の自然文は agent loop が primary。legacy intent-router は fallback only。
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant MH as message-handler
+    participant TO as turn-orchestrator
+    participant R as conversation runner
+    participant SS as state-snapshot
+    participant LLM as LLM Bridge
+    participant H as handlers
+    U->>MH: messageCreate
+    MH->>TO: runTurn
+    TO->>R: run(userText)
+    R->>SS: buildStateSnapshot()
+    SS-->>R: queue / automation / targets / news
+    R->>LLM: agent_turn + jsonSchema
+    LLM-->>R: reply + tool_call + needs_confirmation
+    alt destructive tool
+        R-->>U: 件数つき確認文
+        U->>R: はい
+        R->>H: executeTool
+    else safe tool or display
+        R->>H: executeTool or direct reply
+    else invalid json / unknown tool
+        R->>LLM: intent_classify fallback
+    end
+```
+
+## 5. 依存関係
 
 ```mermaid
 flowchart LR
@@ -179,6 +225,7 @@ flowchart LR
     B --> D[conversation/]
     D --> E[llm/bridge]
     D --> F[posting/]
+    D --> O[handlers/]
     F --> G[account-state/]
     F --> E
     F --> H[x-api/]
@@ -186,6 +233,7 @@ flowchart LR
     G --> J[zod]
     E --> K[anthropic-sdk]
     E --> L[claude-code CLI]
+    E --> P[codex CLI]
     H --> M[twitter-api-v2]
     B --> N[discord.js]
 ```
@@ -198,7 +246,7 @@ main → discord → conversation → posting → llm/x-api/account-state/settin
 
 逆向きの import は禁止。
 
-## 5. 不変方針 (DESIGN.md §1)
+## 6. 不変方針 (DESIGN.md §1)
 
 1. **repo が正本** ─ account.json / state.json
 2. **core が頭脳** ─ LLM 呼出は bridge 経由
@@ -206,7 +254,7 @@ main → discord → conversation → posting → llm/x-api/account-state/settin
 4. **1 顧客 = 1 VPS = 1 Discord bot**
 5. **自然言語 primary、slash secondary**
 
-## 6. 状態の境界
+## 7. 状態の境界
 
 mutable な state は次の 3 ヶ所のみ:
 
@@ -218,14 +266,24 @@ mutable な state は次の 3 ヶ所のみ:
 
 **immutable**: `content/<id>/content.json` (publish 後は更新しない、archive のみ)
 
-## 7. 並行性
+### 7.1 automation_level
+
+`account.json` の `x_action_system.automation_level` は customer-facing の自動化レベル。agent loop の state snapshot に入り、reply の厚みと handler 側の dispatch 方針に影響する。
+
+| level | 意味 |
+| --- | --- |
+| `manual` | 自動では出さず、session を貯める。顧客が手動で開始 |
+| `semi_auto` | default。draft / reply / quote は Discord 承認を挟む |
+| `full_auto` | 条件を満たす引用 RP / reply / publish を自動実行 |
+
+## 8. 並行性
 
 - Node.js single-threaded で event-loop ベース
 - ファイル I/O は proper-lockfile で flock
 - 同 account に対する複数 process 起動は禁止
 - async handler は順序保証なし → conversation lock で 1 turn ずつ serialize
 
-## 8. error 戦略
+## 9. error 戦略
 
 ```typescript
 // LLM 系の error は型で区別
@@ -237,9 +295,9 @@ class LlmProviderError extends Error {}
 // → catch で rate_limit / authorization / network を区別
 ```
 
-intent-router は **すべての error を unknown intent fallback** で吸収 (顧客に向かって投げない)。
+agent loop は invalid JSON / invalid shape / unknown tool / provider exception を `agent_loop_fallback` として記録し、legacy intent-router に委譲する。intent-router 側でも **すべての error を unknown intent fallback** で吸収し、顧客に internal error を出さない。
 
-## 9. テスト
+## 10. テスト
 
 - vitest
 - src と並行構造で `tests/unit/`
@@ -249,9 +307,10 @@ intent-router は **すべての error を unknown intent fallback** で吸収 (
 
 詳細: [50-testing.md](./50-testing.md)
 
-## 10. 関連 docs
+## 11. 関連 docs
 
 - [10-discord-conversation-engine.md](./10-discord-conversation-engine.md)
+- [11-agent-loop.md](./11-agent-loop.md)
 - [11-intent-router.md](./11-intent-router.md)
 - [12-llm-bridge.md](./12-llm-bridge.md)
 - [20-posting-state-machine.md](./20-posting-state-machine.md)

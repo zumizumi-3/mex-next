@@ -9,13 +9,19 @@
 | Pillar | Use | Status |
 |---|---|---|
 | ① **Xserver / VPS** | bot 常駐 + systemd timer | done (zumi-x 移行済) |
-| ② **Claude / Codex** | LLM bridge (intent / draft / 5-axis judge) | claude_code default、Codex provider 未実装 |
+| ② **Claude / Codex** | LLM bridge (agent loop / draft / 5-axis judge) | 3 provider 対応 (Anthropic SDK / Claude Code / Codex CLI) |
 | ③ **Discord** | 顧客唯一の接点 | done (auto-thread / mention 不要 / pending confirm) |
 | ④ **GitHub** | code repo + state of truth + ワークフロー | repo only。Tier 1+ 未実装 |
 
 ## Currently shipping (deployed on zumi-x main)
 
-- 自然言語 + slash 並行 (intent classify via Claude Code CLI)
+- 自然言語 + slash 並行 (agent loop primary / legacy intent fallback)
+- agent loop (1-shot structured output, 3-provider 対応)
+- automation_level (manual / semi_auto / full_auto)
+- proactive nudge (weekly / monthly / stale target / unanswered phase)
+- news + X trends in state snapshot
+- onboarding skip + phase auto chain
+- install-systemd-units.sh (suffix 統一)
 - auto-thread / mention 不要
 - pending-confirmation store (はい / いいえ)
 - 33 問オンボーディング → bootstrap で最初の draft (background)

@@ -10,9 +10,8 @@
 
 ```bash
 # 1. service 群の状態
-sudo systemctl status mex-bot mex-self-update.timer \
-  mex-daily-zumi-x.timer mex-publish-zumi-x.timer \
-  mex-reactions-poll-zumi-x.timer mex-weekly-retro-zumi-x.timer
+sudo systemctl status mex-bot
+sudo systemctl list-timers 'mex-*-zumi-x.timer'
 
 # 2. bot のログ末尾
 sudo journalctl -u mex-bot -n 100 --no-pager
@@ -25,12 +24,21 @@ sudo journalctl -u mex-bot --since "06:00 today" | grep -E "publish|failed"
 
 ```text
 mex-bot.service: active (running)
-mex-self-update.timer: active (waiting), Trigger: 30min
 mex-daily-zumi-x.timer: active (waiting), Trigger: tomorrow 07:00
 mex-publish-zumi-x.timer: active (waiting), Trigger: 5min
-mex-reactions-poll-zumi-x.timer: active (waiting), Trigger: 30min
+mex-reactions-poll-zumi-x.timer: active (waiting), Trigger: 15min
+mex-morning-digest-zumi-x.timer: active (waiting), Trigger: tomorrow 07:00
+mex-self-check-zumi-x.timer: active (waiting), Trigger: 1h
 mex-weekly-retro-zumi-x.timer: active (waiting), Trigger: next Monday 07:00
+mex-phase-questionnaire-weekly-zumi-x.timer: active (waiting), Trigger: next Monday 09:00
+mex-phase-questionnaire-monthly-zumi-x.timer: active (waiting), Trigger: next month 09:00
+mex-proactive-nudge-weekly-zumi-x.timer: active (waiting), Trigger: next Monday 07:30
+mex-proactive-nudge-monthly-zumi-x.timer: active (waiting), Trigger: next month 07:30
+mex-proactive-nudge-stale-target-zumi-x.timer: active (waiting), Trigger: tomorrow 08:00
+mex-proactive-nudge-unanswered-phase-zumi-x.timer: active (waiting), Trigger: today 19:00
 ```
+
+確認対象の 12 timer は `publish / daily / morning-digest / reactions-poll / self-check / weekly-retro / phase-questionnaire-monthly / phase-questionnaire-weekly / proactive-nudge-weekly / proactive-nudge-monthly / proactive-nudge-stale-target / proactive-nudge-unanswered-phase`。
 
 ## 2. status コマンド (内蔵)
 
@@ -78,6 +86,7 @@ sudo journalctl -u mex-bot -f
 
 # 特定 timer
 sudo journalctl -u mex-daily-zumi-x.timer -n 50
+sudo journalctl -u mex-proactive-nudge-weekly-zumi-x.service -n 80 --no-pager
 
 # 特定 kind だけ (jq で構造化 log を絞る)
 sudo journalctl -u mex-bot -o json | jq 'select(.kind == "post_v2_generate")'
@@ -181,7 +190,59 @@ sudo systemctl start mex-bot
 
 > **注意**: bot 起動中の手動 state 編集は flock 競合で書き戻される可能性が高い。必ず stop → edit → start。
 
-## 9. weekly チェック
+## 9. automation_level の確認と変更
+
+`automation_level` は `manual / semi_auto / full_auto` の 3 段階。default は `semi_auto`。
+
+```bash
+# 現在値
+sudo -u mex jq -r '.x_action_system.automation_level // "semi_auto"' \
+  /srv/mex/zumi-x-x-ops/account.json
+
+# 状態確認ログ
+sudo journalctl -u mex-bot -o json | jq 'select((.MESSAGE // "") | test("automation_level|automation.status"))'
+```
+
+顧客が Discord で変更するのが基本:
+
+```text
+自動化レベルを full_auto にして
+自動化レベルを semi_auto に戻して
+```
+
+緊急時に repo を直す場合は bot を止めてから編集する。
+
+```bash
+sudo systemctl stop mex-bot
+sudo -u mex jq '.x_action_system.automation_level = "semi_auto"' \
+  /srv/mex/zumi-x-x-ops/account.json > /tmp/account.json
+sudo -u mex mv /tmp/account.json /srv/mex/zumi-x-x-ops/account.json
+sudo systemctl start mex-bot
+```
+
+`full_auto` は target 起点の引用 RP / リプライ生成が自動で進むため、切替後 24h は `reactions-poll` と target activity のログを厚めに見る。
+
+## 10. judgment events
+
+operator 通知に関係する event:
+
+| event | 意味 | 対応 |
+| --- | --- | --- |
+| `publish_draft_missing` | publish_queue の item に対応 draft が無い | content repo / state.json の整合を確認。復旧できなければ手動で item を held/cancel |
+| `escalation_failed` | operator escalation 自体が失敗 | Discord channel / token / operator allowlist を確認 |
+| `agent_loop_fallback` | agent loop が legacy intent-router に落ちた | 連続する場合は provider / schema / tool catalog mismatch を確認 |
+
+```bash
+sudo journalctl -u mex-publish-zumi-x.service -o json \
+  | jq 'select(.kind == "publish_draft_missing" or .kind == "escalation_failed")'
+
+sudo journalctl -u mex-bot -o json \
+  | jq 'select(.kind == "agent_loop_fallback")'
+```
+
+`publish_draft_missing` / `escalation_failed` は operator attention の対象。顧客には「確認中」とだけ伝え、state を直接触る前に account repo の git status を残す。
+
+## 11. weekly チェック
 
 週 1 で見るもの:
 
@@ -200,16 +261,16 @@ sudo journalctl -u mex-bot --since "1 week ago" | grep "x_api_rate_limit"
 
 数値の閾値は [21-monitoring.md](./21-monitoring.md) を参照。
 
-## 10. 月次の整備
+## 12. 月次の整備
 
 月 1 で:
 
 - account repo の `content/` フォルダ size 確認 (古い content の archive)
 - Doppler service token の expire 日確認
 - X API tier 使用率の振り返り
-- self-update timer が正常に走っているか journalctl で確認
+- `mex-self-check-<id>.timer` と 12 timer が active か確認
 
-## 11. VPS 復旧
+## 13. VPS 復旧
 
 bot が乗っていた VPS が飛んだ / 引っ越し時:
 
@@ -227,7 +288,7 @@ bash /opt/mex-next/scripts/recover.sh <account-id> <github-owner>/<repo-name>
 
 GitHub 上の account_repo に auto push された `state.json` / `account.json` から復旧します。
 
-## 12. GitHub Actions cron (B2)
+## 14. GitHub Actions cron (B2)
 
 retro / アンケート系は VPS の systemd timer **と並列で** GitHub Actions からも trigger されます。VPS 側 timer が落ちても、account repo 側の Actions から bot webhook を叩きます。
 
@@ -252,7 +313,7 @@ curl http://<vps>:8787/health
 
 webhook に失敗した場合、Actions は warning を出し、`retros/` に `*-webhook-failed.md` を commit します。bot 側の `CRON_WEBHOOK_SECRET` と GitHub 側 `MEX_BOT_WEBHOOK_TOKEN` が一致しているか、`MEX_BOT_URL` が runner から到達可能かを確認してください。
 
-## 13. 関連 docs
+## 15. 関連 docs
 
 - [21-monitoring.md](./21-monitoring.md)
 - [50-troubleshooting.md](./50-troubleshooting.md)

@@ -1,10 +1,18 @@
 ## intent router — 自然言語 → intent
 
+> ⚠️ **Legacy fallback only.** New conversation paths go through the
+> tool-calling agent loop in `src/llm/agent-loop.ts`. This document
+> describes the intent-router that survives only as a fallback when
+> the agent loop returns `fallbackToLegacy=true` (anthropic SDK
+> unavailable, or unknown_tool / invalid_json from the provider).
+> See [11-agent-loop.md](./11-agent-loop.md) for the primary path.
+
 > **対象読者**: conversation/intent-router.ts を直す developer
 > **前提**: LLM prompt 設計の基礎
 > **読了時間**: 約 8 分
 
-自然文の Discord メッセージを構造化 intent に変える module。`src/conversation/intent-router.ts`。
+自然文の Discord メッセージを構造化 intent に変える legacy module。`src/conversation/intent-router.ts`。
+通常の新規 conversation turn は `src/llm/agent-loop.ts` が state snapshot + tool catalog を使って処理し、intent-router は agent loop が安全に判断できなかった場合だけ呼ばれる。
 
 ## 1. 全体図
 
@@ -20,7 +28,7 @@ flowchart LR
     E -->|no| Z[fallback unknown]
 ```
 
-## 2. supported intents
+## 2. legacy supported intents
 
 `src/conversation/intent-router.ts` 抜粋:
 
@@ -45,7 +53,9 @@ export type IntentName =
   | 'unknown';
 ```
 
-新しい intent を足す場合:
+新しい操作を足す場合は原則 `src/handlers/tool-specs.ts` の tool catalog に追加する。intent-router へ intent を足すのは、agent loop fallback でも同じ操作を扱う必要がある場合だけ。
+
+legacy intent を足す場合:
 
 1. `IntentName` union に追加
 2. `SUPPORTED_INTENTS` set に追加
@@ -204,13 +214,13 @@ function stripCodeFence(raw: string): string {
 
 ## 8. provider 選定
 
-intent_classify は **lightweight** なので Anthropic SDK 直接、prompt caching ON。
+intent_classify は fallback path の **lightweight** classify。Anthropic SDK 直接、prompt caching ON。
 
 | kind | provider | timeout | maxtokens |
 | --- | --- | --- | --- |
 | intent_classify | anthropic | 8s | 600 |
 
-claude-code subprocess を使うのは 30+s の "thinking" タスクのみ。詳細: [12-llm-bridge.md](./12-llm-bridge.md)
+primary path の `agent_turn` は [11-agent-loop.md](./11-agent-loop.md) を参照。LLM bridge の詳細は [12-llm-bridge.md](./12-llm-bridge.md)。
 
 ## 9. テスト戦略
 
@@ -236,6 +246,7 @@ expect(result.confirmationNeeded).toBe(true);  // overridden
 
 ## 10. 関連 docs
 
+- [11-agent-loop.md](./11-agent-loop.md)
 - [12-llm-bridge.md](./12-llm-bridge.md)
 - [10-discord-conversation-engine.md](./10-discord-conversation-engine.md)
 - [00-architecture.md](./00-architecture.md)
