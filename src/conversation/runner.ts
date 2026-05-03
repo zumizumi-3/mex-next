@@ -259,6 +259,10 @@ export class IntentDrivenRunner implements ConversationRunner {
         { error: error instanceof Error ? error.message : String(error) },
         'agent_loop_failed_falling_back_to_legacy',
       );
+      this.emitAgentLoopFallback(input.turnHandlerContext, {
+        reason: 'exception',
+        detail: error instanceof Error ? error.message : String(error),
+      });
       return this.runLegacyIntent(
         input.userText,
         input.turnHandlerContext,
@@ -270,6 +274,9 @@ export class IntentDrivenRunner implements ConversationRunner {
     }
 
     if (result.fallbackToLegacy) {
+      this.emitAgentLoopFallback(input.turnHandlerContext, {
+        reason: result.fallbackReason ?? 'unknown_tool',
+      });
       return this.runLegacyIntent(
         input.userText,
         input.turnHandlerContext,
@@ -304,6 +311,19 @@ export class IntentDrivenRunner implements ConversationRunner {
       output: result.reply,
       metadata: { agentLoop: true, trace: result.trace, usage: result.usage },
     };
+  }
+
+  private emitAgentLoopFallback(
+    ctx: HandlerContext,
+    payload: { reason: 'unknown_tool' | 'exception'; detail?: string },
+  ): void {
+    void ctx.judgmentEvents
+      ?.emit({
+        accountId: ctx.accountId,
+        kind: 'agent_loop_fallback',
+        payload,
+      })
+      .catch(() => undefined);
   }
 
   private async runLegacyIntent(

@@ -7,6 +7,7 @@ import { IntentDrivenRunner } from '../../../src/conversation/runner.js';
 import { buildTurnMessage } from '../../../src/conversation/turn-message.js';
 import { createPendingConfirmationStore } from '../../../src/conversation/pending-confirmation-store.js';
 import type { LlmProvider } from '../../../src/llm/bridge.js';
+import { JudgmentEventStream } from '../../../src/observability/judgment-events.js';
 import { setupHandlerTest } from '../handlers/test-helpers.js';
 
 describe('IntentDrivenRunner agent loop', () => {
@@ -149,12 +150,63 @@ describe('IntentDrivenRunner agent loop', () => {
       await scaf.cleanup();
     }
   });
+
+  it("unknown_tool fallback 時に agent_loop_fallback event を emit して legacy に降りる", async () => {
+    const scaf = await setupHandlerTest();
+    const judgmentEvents = new JudgmentEventStream({
+      filePath: join(scaf.workDir, 'judgment-events.jsonl'),
+    });
+    const create = vi.fn().mockResolvedValueOnce(
+      anthropicMessage({
+        stopReason: 'tool_use',
+        content: [{ type: 'tool_use', id: 'toolu_1', name: 'not_registered', input: {} }],
+      }),
+    );
+    const runner = new IntentDrivenRunner({
+      bridge: jsonBridge({
+        intent: 'schedule.list',
+        args: {},
+        confirmation_needed: false,
+      }),
+      handlers: buildHandlers(),
+      handlerContext: { ...scaf.ctx, judgmentEvents },
+      agentLoop: { anthropic: anthropicWith(create), model: 'claude-opus-4-7' },
+    });
+
+    try {
+      const result = await runner.run({
+        conversationKey: 'conv_1',
+        accountId: 'zumi-x',
+        turnId: 'turn_1',
+        message: buildTurnMessage({ content: '予約見せて', author: { id: 'u1' } }),
+        abortSignal: new AbortController().signal,
+      });
+
+      expect(result.metadata?.intent).toBe('schedule.list');
+      const events = await judgmentEvents.query({ kind: 'agent_loop_fallback' });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toEqual({ reason: 'unknown_tool' });
+    } finally {
+      await scaf.cleanup();
+    }
+  });
 });
 
 function unusedBridge(): LlmProvider {
   return {
     async call() {
       throw new Error('legacy bridge should not be called');
+    },
+  };
+}
+
+function jsonBridge(payload: Record<string, unknown>): LlmProvider {
+  return {
+    async call() {
+      return {
+        text: JSON.stringify(payload),
+        usage: { input: 0, output: 0 },
+      };
     },
   };
 }

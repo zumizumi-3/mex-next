@@ -254,13 +254,20 @@ async function main(): Promise<void> {
     );
   const bridge = await buildLlmBridge(config, log, poster);
   const xApi = buildXApiClient(config, log, poster);
-  const agentLoopEnabled = process.env.MEX_AGENT_LOOP_ENABLED === '1';
+  const agentLoopDisabledByEnv = process.env.MEX_AGENT_LOOP_DISABLED === '1';
+  const agentLoopDisabledReason = agentLoopDisabledByEnv
+    ? 'disabled_by_env'
+    : config.anthropicApiKey
+      ? null
+      : 'missing_anthropic_key';
   const agentLoopAnthropic =
-    agentLoopEnabled && config.anthropicApiKey
+    !agentLoopDisabledReason && config.anthropicApiKey
       ? new Anthropic({ apiKey: config.anthropicApiKey })
       : undefined;
-  if (agentLoopEnabled && !agentLoopAnthropic) {
-    log.warn('agent_loop_disabled_missing_anthropic_key');
+  if (agentLoopAnthropic) {
+    log.info('agent_loop_enabled');
+  } else {
+    log.info({ agent_loop_disabled_reason: agentLoopDisabledReason }, 'agent_loop_disabled');
   }
 
   const judgmentEvents = new JudgmentEventStream({

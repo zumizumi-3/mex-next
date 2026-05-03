@@ -3,7 +3,6 @@ import type { Logger } from 'pino';
 import type { HandlerContext } from '../handlers/types.js';
 import type { ToolSpec } from '../handlers/tool-specs.js';
 import { executeTool } from './tool-executor.js';
-import { AGENT_LOOP_LEGACY_FALLBACK } from './prompts.js';
 
 export interface AgentLoopOptions {
   anthropic: Anthropic;
@@ -29,8 +28,9 @@ export interface AgentLoopResult {
   /** Tool call audit trail. */
   trace: Array<{ tool: string; input: unknown; outputSummary: string }>;
   usage: { input: number; output: number };
-  /** Phase 1 escape hatch for handlers not yet represented as tools. */
+  /** Fallback for defensive coverage gaps, e.g. model requested an unknown tool. */
   fallbackToLegacy?: boolean;
+  fallbackReason?: 'unknown_tool';
 }
 
 type ToolUseBlock = Anthropic.ToolUseBlock;
@@ -64,9 +64,6 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
     if (response.stop_reason === 'end_turn') {
       const reply = extractText(response.content);
-      if (reply.trim() === AGENT_LOOP_LEGACY_FALLBACK) {
-        return { reply: '', trace, usage, fallbackToLegacy: true };
-      }
       return { reply: reply || 'すみません、うまく返答を作れませんでした。', trace, usage };
     }
 
@@ -104,7 +101,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     if (firstDestructive) {
       const spec = specsByName.get(firstDestructive.name);
       if (!spec) {
-        return { reply: '', trace, usage, fallbackToLegacy: true };
+        opts.logger.warn({ toolName: firstDestructive.name }, 'agent_loop_unknown_tool');
+        return { reply: '', trace, usage, fallbackToLegacy: true, fallbackReason: 'unknown_tool' };
       }
       const toolInput = asRecord(firstDestructive.input);
       if (!approvalMatches(opts.pendingApproval, firstDestructive.name, toolInput)) {
@@ -133,7 +131,7 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
       const spec = specsByName.get(toolUse.name);
       if (!spec) {
         opts.logger.warn({ toolName: toolUse.name }, 'agent_loop_unknown_tool');
-        return { reply: '', trace, usage, fallbackToLegacy: true };
+        return { reply: '', trace, usage, fallbackToLegacy: true, fallbackReason: 'unknown_tool' };
       }
       const toolInput = asRecord(toolUse.input);
       const result = await executeTool(spec, toolInput, opts.handlerContext);
@@ -233,10 +231,38 @@ async function buildApprovalPrompt(input: {
   const summary = input.spec.summarize
     ? await input.spec.summarize(input.toolInput, input.ctx)
     : '対象';
-  if (input.spec.name === 'publish_now') {
-    return `${summary}を今すぐ投稿します。実行しますか?`;
+  switch (input.spec.name) {
+    case 'publish_now':
+      return `${summary}を今すぐ投稿します。実行しますか?`;
+    case 'cancel_publish_items':
+      return `${summary}を取り消します。実行しますか?`;
+    case 'add_target_handle':
+      return `@${String(input.toolInput.handle ?? '').replace(/^@/, '')} を追跡対象に追加します。実行しますか?`;
+    case 'remove_target_handle':
+      return `@${String(input.toolInput.handle ?? '').replace(/^@/, '')} を追跡対象から外します。実行しますか?`;
+    case 'enable_all_automation':
+      return '自動運用を一括 ON にします。実行しますか?';
+    case 'skip_today':
+      return '今日の予約をスキップします。実行しますか?';
+    case 'set_cadence':
+      return `投稿ペースを ${String(input.toolInput.level ?? '')} に変更します。実行しますか?`;
+    case 'start_onboarding':
+      return '33 問オンボーディングを開始します。実行しますか?';
+    case 'cancel_onboarding':
+      return '進行中のオンボーディングを中断します。実行しますか?';
+    case 'run_seed':
+      return '投稿 draft の一括生成を開始します。実行しますか?';
+    case 'run_training':
+      return '過去投稿の取り込みと voice 学習を開始します。実行しますか?';
+    case 'start_phase_questionnaire':
+      return 'phase questionnaire を開始します。実行しますか?';
+    case 'run_system_update':
+      return 'mex bot の自己更新を開始します。実行しますか?';
+    case 'regenerate_knowledge':
+      return 'knowledge files を再生成します。実行しますか?';
+    default:
+      return `${summary}を変更します。実行しますか?`;
   }
-  return `${summary}を取り消します。実行しますか?`;
 }
 
 function summarizeOutput(output: string): string {

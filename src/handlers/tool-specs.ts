@@ -1,12 +1,29 @@
 import type { Handler, HandlerArgs, HandlerContext } from './types.js';
 import {
+  handleAutomationEnableAll,
+  handleAutomationStatus,
+  handleCadenceSkipToday,
   handleHelpShow,
+  handleOnboardCancel,
+  handleOnboardStart,
+  handleOnboardStatus,
+  handlePhaseQuestionnaireStart,
+  handlePhaseQuestionnaireStatus,
+  handlePostCreate,
   handleQueueSummary,
   handleScheduleCancel,
   handleScheduleDetail,
   handleScheduleList,
   handleSchedulePublishNow,
+  handleSeedRun,
   handleStatusShow,
+  handleSystemRegenerateKnowledge,
+  handleSystemUpdate,
+  handleTargetAdd,
+  handleTargetList,
+  handleTargetRemove,
+  handleTrainingRun,
+  makeCadenceSetHandler,
 } from './index.js';
 
 export interface ToolSpec {
@@ -54,6 +71,14 @@ function passThrough(input: Record<string, unknown>): HandlerArgs {
 function emptyArgs(): HandlerArgs {
   return {};
 }
+
+const setCadenceToolHandler: Handler = async (ctx, args) => {
+  const level = String(args.level ?? '').trim();
+  if (level !== 'light' && level !== 'standard' && level !== 'aggressive') {
+    return { content: '⚠️ level は light/standard/aggressive のいずれか。' };
+  }
+  return makeCadenceSetHandler(level)(ctx, {});
+};
 
 async function summarizeCancel(
   input: Record<string, unknown>,
@@ -186,5 +211,208 @@ export const TOOL_SPECS: ToolSpec[] = [
     destructive: false,
     buildHandlerArgs: emptyArgs,
     handler: handleHelpShow,
+  },
+  {
+    name: 'add_target_handle',
+    description:
+      'X の追跡対象 handle を追加する。顧客が「@tanaka を追跡して」「ターゲットに追加」と言ったら使う。handle は @ なし。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'X handle。@ は付けない。' },
+      },
+      required: ['handle'],
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: handleTargetAdd,
+  },
+  {
+    name: 'list_targets',
+    description:
+      '追跡対象 handle の一覧を返す。顧客が「ターゲット一覧」「追跡対象見せて」と言ったら使う。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: false,
+    buildHandlerArgs: emptyArgs,
+    handler: handleTargetList,
+  },
+  {
+    name: 'remove_target_handle',
+    description:
+      'X の追跡対象 handle を削除する。顧客が「@tanaka を外して」「追跡対象から削除」と言ったら使う。handle は @ なし。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'X handle。@ は付けない。' },
+      },
+      required: ['handle'],
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: handleTargetRemove,
+  },
+  {
+    name: 'get_automation_status',
+    description:
+      '自動運用 gate の状態を返す。顧客が「自動運用どうなってる」「automation status」と聞いたら使う。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: false,
+    buildHandlerArgs: emptyArgs,
+    handler: handleAutomationStatus,
+  },
+  {
+    name: 'enable_all_automation',
+    description:
+      '全 automation gate を auto に切り替える。自動運用を一括 ON にする operator 向け操作。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: true,
+    buildHandlerArgs: emptyArgs,
+    handler: handleAutomationEnableAll,
+  },
+  {
+    name: 'skip_today',
+    description:
+      "今日の予約をスキップする (= 今日の active を全部 cancel する)。cancel_publish_items{scope:'today_all'} の同義。LLM はどちらを使ってもよいが、「今日の予約スキップ」と顧客が明示した場合のみこちら、より広い「全部」「いらない」表現は cancel_publish_items を使うこと。",
+    inputSchema: { type: 'object', properties: {} },
+    destructive: true,
+    buildHandlerArgs: emptyArgs,
+    handler: handleCadenceSkipToday,
+  },
+  {
+    name: 'set_cadence',
+    description: '投稿ペースを変更する。light=2/日, standard=4/日, aggressive=6/日。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        level: {
+          type: 'string',
+          enum: ['light', 'standard', 'aggressive'],
+          description: '投稿ペース。light=2/日, standard=4/日, aggressive=6/日。',
+        },
+      },
+      required: ['level'],
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: setCadenceToolHandler,
+  },
+  {
+    name: 'create_post_draft',
+    description: 'テーマから投稿 draft を 1 件生成する。承認後に X に投稿される。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: '投稿 draft のテーマ。' },
+      },
+      required: ['topic'],
+    },
+    destructive: false,
+    buildHandlerArgs: passThrough,
+    handler: handlePostCreate,
+  },
+  {
+    name: 'start_onboarding',
+    description:
+      '33 問オンボーディングを開始する。途中で「やめる」と言えば中断可能。/mex update 後の初回 setup に使う。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: true,
+    buildHandlerArgs: emptyArgs,
+    handler: handleOnboardStart,
+  },
+  {
+    name: 'get_onboarding_status',
+    description:
+      'オンボーディングの進行状況を返す。顧客が「オンボーディング状況」「今どこまで」と聞いたら使う。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: false,
+    buildHandlerArgs: emptyArgs,
+    handler: handleOnboardStatus,
+  },
+  {
+    name: 'cancel_onboarding',
+    description:
+      '進行中のオンボーディングを中断する。顧客が「オンボーディングやめる」「中止」と言ったら使う。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: true,
+    buildHandlerArgs: emptyArgs,
+    handler: handleOnboardCancel,
+  },
+  {
+    name: 'run_seed',
+    description:
+      '複数の投稿 draft をまとめて生成する。count は 1-13、topics は任意テーマ配列、approve_all=true なら全件 schedule に流す。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        count: { type: 'number', minimum: 1, maximum: 13 },
+        topics: { type: 'array', items: { type: 'string' } },
+        approve_all: { type: 'boolean' },
+      },
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: handleSeedRun,
+  },
+  {
+    name: 'run_training',
+    description:
+      'X の過去投稿を取り込み、voice 学習用 exemplar を作る。count は 5-200。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        count: { type: 'number', minimum: 5, maximum: 200 },
+      },
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: handleTrainingRun,
+  },
+  {
+    name: 'start_phase_questionnaire',
+    description:
+      '週次・月次・四半期の phase questionnaire を開始する。cadence 省略時は monthly。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cadence: { type: 'string', enum: ['weekly', 'monthly', 'quarterly'] },
+      },
+    },
+    destructive: true,
+    buildHandlerArgs: passThrough,
+    handler: handlePhaseQuestionnaireStart,
+  },
+  {
+    name: 'get_phase_questionnaire_status',
+    description:
+      'phase questionnaire の最近のセッションや進行状況を返す。cadence で絞り込み可能。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cadence: { type: 'string', enum: ['weekly', 'monthly', 'quarterly'] },
+      },
+    },
+    destructive: false,
+    buildHandlerArgs: passThrough,
+    handler: handlePhaseQuestionnaireStatus,
+  },
+  {
+    name: 'run_system_update',
+    description:
+      'mex bot の自己更新を開始する。operator 専用。プロセス再起動を伴う。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: true,
+    operatorOnly: true,
+    buildHandlerArgs: emptyArgs,
+    handler: handleSystemUpdate,
+  },
+  {
+    name: 'regenerate_knowledge',
+    description:
+      'account.json から knowledge files を再生成する。operator 専用。既存 knowledge files を上書きする。',
+    inputSchema: { type: 'object', properties: {} },
+    destructive: true,
+    operatorOnly: true,
+    buildHandlerArgs: emptyArgs,
+    handler: handleSystemRegenerateKnowledge,
   },
 ];
