@@ -35,6 +35,11 @@ import {
   parseTargetCustomId,
   type TargetButtonDeps,
 } from './target-buttons.js';
+import {
+  dispatchOnboardingButton,
+  parseOnboardingCustomId,
+  type OnboardingButtonDeps,
+} from './onboarding-buttons.js';
 
 /** Single chat-input slash command handler entry. */
 export interface SlashCommandHandler {
@@ -82,6 +87,7 @@ export interface InteractionDeps {
    * registered domain handlers.
    */
   readonly targetButtons?: TargetButtonDeps;
+  readonly onboardingButtons?: OnboardingButtonDeps;
 }
 
 export interface HandleInteractionInput {
@@ -171,6 +177,16 @@ async function dispatchButton(
       'target_button',
     );
     await dispatchTargetButton(interaction, deps.targetButtons);
+    return;
+  }
+
+  const onboardingParsed = parseOnboardingCustomId(customId);
+  if (onboardingParsed && deps.onboardingButtons) {
+    log?.debug(
+      { action: onboardingParsed.action, sessionId: onboardingParsed.sessionId },
+      'onboarding_button',
+    );
+    await dispatchOnboardingButton(interaction, deps.onboardingButtons);
     return;
   }
 

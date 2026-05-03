@@ -514,5 +514,11 @@ export function resolveChoiceKey(
     }
   }
 
+  // Legacy imports sometimes store the middle option as "中".
+  if (trimmed === '中') {
+    const balanced = question.options.find((opt) => opt.key === 'balanced');
+    if (balanced) return balanced.key;
+  }
+
   return null;
 }

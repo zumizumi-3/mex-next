@@ -345,6 +345,7 @@ async function main(): Promise<void> {
           operatorDiscordUserIds: config.operatorDiscordUserIds,
           logger: log,
           targetButtons: targetButtonDeps,
+          onboardingButtons: { ctx: handlerContext, logger: log },
         },
       });
     } catch (error) {

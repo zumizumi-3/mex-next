@@ -22,11 +22,14 @@ interface Scaffold {
   readonly cleanup: () => Promise<void>;
 }
 
-async function makeScaffold(opts?: { llmReply?: string }): Promise<Scaffold> {
+async function makeScaffold(opts?: {
+  llmReply?: string;
+  account?: Record<string, unknown>;
+}): Promise<Scaffold> {
   const workDir = await mkdtemp(join(tmpdir(), 'mex-onb-'));
   await writeFile(
     join(workDir, 'account.json'),
-    JSON.stringify({ account_id: 'zumi-x', display_name: 'zumi' }, null, 2),
+    JSON.stringify(opts?.account ?? { account_id: 'zumi-x', display_name: 'zumi' }, null, 2),
     'utf-8',
   );
   await writeFile(
@@ -86,6 +89,32 @@ async function runFullWizard(collector: OnboardingCollector, sessionId: string):
   }
 }
 
+async function advanceToQuestion(
+  collector: OnboardingCollector,
+  sessionId: string,
+  questionId: string,
+): Promise<void> {
+  for (const _ of ONBOARDING_QUESTIONS) {
+    const session = await collector.getSession(sessionId);
+    if (!session) throw new Error('missing session');
+    if (session.currentQuestionId === questionId) return;
+    const question = ONBOARDING_QUESTIONS.find((q) => q.id === session.currentQuestionId);
+    if (!question) throw new Error(`missing question ${session.currentQuestionId}`);
+    await collector.answerCurrent(sessionId, answerForQuestion(question));
+  }
+  throw new Error(`question not reached: ${questionId}`);
+}
+
+function answerForQuestion(q: (typeof ONBOARDING_QUESTIONS)[number]): unknown {
+  if (q.type === 'select') return (q.default as string | undefined) ?? q.options?.[0]?.key ?? '';
+  if (q.type === 'multi-select') return q.options?.[0]?.key ?? '';
+  if (q.type === 'number') return typeof q.default === 'number' ? q.default : 7;
+  if (q.id === 'x_handle') return 'zumi_ops';
+  if (q.id === 'hot_zones') return '06:00-09:00, 17:00-22:00';
+  if (q.id === 'tracked_handles') return 'tanaka, sato';
+  return '回答テキスト';
+}
+
 describe('OnboardingCollector — round-trip', () => {
   it('start marks saved account fields as pending_review_questions', async () => {
     scaf = await makeScaffold();
@@ -135,6 +164,26 @@ describe('OnboardingCollector — round-trip', () => {
     const updated = await collector.answerCurrent(session.id, '新しい表示名');
     expect(updated.currentQuestionId).toBe('x_handle');
     expect(updated.answers.display_name).toBe('新しい表示名');
+  });
+
+  it('changeCurrentReviewAnswer keeps current_question_id on the reviewed question', async () => {
+    scaf = await makeScaffold({
+      account: { account_id: 'zumi-x', voice_profile: { assertiveness: '中' } },
+    });
+    const collector = new OnboardingCollector({
+      repo: scaf.repo,
+      bridge: scaf.bridge,
+      logger,
+    });
+
+    const session = await collector.start();
+    await advanceToQuestion(collector, session.id, 'assertiveness');
+    const reviewOff = await collector.changeCurrentReviewAnswer(session.id);
+    expect(reviewOff.currentQuestionId).toBe('assertiveness');
+
+    const updated = await collector.answerCurrent(session.id, '強め');
+    expect(updated.answers.assertiveness).toBe('strong');
+    expect(updated.currentQuestionId).toBe('warmth');
   });
 
   it('start → answerCurrent (×N) → finalize updates account.json', async () => {

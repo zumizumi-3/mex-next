@@ -21,8 +21,14 @@ import {
   questionIndexFor,
   renderQuestion,
   type OnboardingSession,
+  type ResolvedQuestion,
 } from '../onboarding/collector.js';
-import { ONBOARDING_QUESTIONS, findQuestionById } from '../onboarding/questions.js';
+import {
+  ONBOARDING_QUESTIONS,
+  findQuestionById,
+  resolveChoiceKey,
+  type OnboardingQuestion,
+} from '../onboarding/questions.js';
 import { startPhaseQuestionnaire } from '../phase-questionnaire/runner.js';
 import { STATE_EMOJI } from '../discord/templates.js';
 import type { LlmProvider } from '../llm/bridge.js';
@@ -60,7 +66,11 @@ export async function handleOnboardStart(
     '',
     '_この thread にそのまま自然文で返してください。途中でやめたい時は「やめる」と書いてください。_',
   ];
-  return { content: lines.join('\n'), tag: 'onboard.start' };
+  return {
+    content: lines.join('\n'),
+    components: onboardingCancelComponents(session.id),
+    tag: 'onboard.start',
+  };
 }
 
 export async function handleOnboardStatus(
@@ -90,7 +100,11 @@ export async function handleOnboardStatus(
     lines.push('現在の質問:');
     lines.push(renderOnboardingPrompt(session, current, Math.max(0, idx)));
   }
-  return { content: lines.join('\n'), tag: 'onboard.status' };
+  return {
+    content: lines.join('\n'),
+    ...(current ? { components: onboardingPromptComponents(session, current) } : {}),
+    tag: 'onboard.status',
+  };
 }
 
 export async function handleOnboardCancel(
@@ -117,67 +131,108 @@ export async function handleOnboardCancel(
  * exists: routes the customer's free-form text directly to
  * answerCurrent, bypassing intent classification.
  *
- * Returns the formatted response text (next question or completion
- * notice). Caller is responsible for sending it.
+ * Returns the formatted response and optional components (next question
+ * or completion notice). Caller is responsible for sending it.
  */
 export async function applyFreeFormAnswer(
   ctx: HandlerContext,
   session: OnboardingSession,
   rawText: string,
-): Promise<string> {
+): Promise<HandlerResult> {
   const collector = buildCollectorFromContext(ctx);
+  const fresh = await collector.getSession(session.id);
+  if (!fresh) {
+    return {
+      content: `${STATE_EMOJI.attention} オンボーディングセッションが見つかりませんでした。もう一度「最初から」と話しかけてください。`,
+      tag: 'onboard.answer.missing_session',
+    };
+  }
+  const currentSession = fresh;
+  ctx.logger.info(
+    {
+      session_id: currentSession.id,
+      current_question_id: currentSession.currentQuestionId,
+      pending_review_ids: currentSession.pending_review_questions.map((q) => q.id),
+    },
+    'onboarding_free_form_answer_received',
+  );
   const trimmed = rawText.trim();
   if (trimmed === 'やめる' || trimmed.toLowerCase() === 'cancel' || trimmed === '中止') {
-    await collector.cancel(session.id);
-    return `${STATE_EMOJI.cancelled} オンボーディング (\`${session.id}\`) を中断しました。`;
+    await collector.cancel(currentSession.id);
+    return {
+      content: `${STATE_EMOJI.cancelled} オンボーディング (\`${currentSession.id}\`) を中断しました。`,
+      tag: 'onboard.answer.cancel',
+    };
   }
-  const currentReview = pendingReviewForQuestion(session, session.currentQuestionId);
+  const currentReview = pendingReviewForQuestion(currentSession, currentSession.currentQuestionId);
   if (currentReview) {
+    assertReviewQuestionId(currentReview, currentSession.currentQuestionId);
     const verdict = await classifyReviewDecision(ctx.bridge, {
       questionId: currentReview.id,
       question: currentReview.question.question,
+      review: currentReview,
       savedValueText: currentReview.savedValueText,
       reply: trimmed,
     });
-    if (verdict === 'keep') {
-      const updated = await collector.keepCurrentReviewAnswer(session.id);
+    if (verdict?.action === 'keep') {
+      const updated = await collector.keepCurrentReviewAnswer(currentSession.id);
       return renderUpdatedOnboardingSession(ctx, collector, updated);
     }
-    if (verdict === 'change') {
-      const updated = await collector.changeCurrentReviewAnswer(session.id);
+    if (verdict?.action === 'change') {
+      const updated = await collector.changeCurrentReviewAnswer(currentSession.id);
       const question = findQuestionById(updated.currentQuestionId);
       if (!question) {
-        return '⚠️ 次の質問が見つかりませんでした。operator に連絡してください。';
+        return {
+          content: '⚠️ 次の質問が見つかりませんでした。operator に連絡してください。',
+          tag: 'onboard.answer.missing_question',
+        };
       }
       const idx = questionIndexFor(question.id);
-      return renderQuestion(question, Math.max(0, idx));
+      return {
+        content: renderQuestion(question, Math.max(0, idx)),
+        components: onboardingCancelComponents(updated.id),
+        tag: 'onboard.answer.change',
+      };
     }
-    return [
-      `${STATE_EMOJI.attention} 既存回答を維持するか変更するかを判断できませんでした。`,
-      '「維持」または「変更する」と返してください。',
-      '',
-      renderReviewQuestion(currentReview, questionIndexFor(currentReview.id)),
-    ].join('\n');
+    if (verdict?.action === 'answer') {
+      const updated = await collector.changeCurrentReviewAnswer(currentSession.id);
+      const answered = await collector.answerCurrent(updated.id, verdict.answer);
+      return renderUpdatedOnboardingSession(ctx, collector, answered);
+    }
+    return {
+      content: [
+        `${STATE_EMOJI.attention} 既存回答を維持するか変更するかを判断できませんでした。`,
+        '「維持」または「変更する」と返してください。',
+        '',
+        renderReviewQuestion(currentReview, questionIndexFor(currentReview.id)),
+      ].join('\n'),
+      components: onboardingReviewComponents(currentSession.id),
+      tag: 'onboard.answer.review_ambiguous',
+    };
   }
   const skipping = trimmed === 'skip' || trimmed === 'スキップ' || trimmed === '飛ばす';
   let answer: unknown = trimmed;
   if (skipping) {
-    const cur = findQuestionById(session.currentQuestionId);
+    const cur = findQuestionById(currentSession.currentQuestionId);
     if (cur && !cur.required) {
       answer = '';
     } else {
-      return `${STATE_EMOJI.attention} この質問は必須なのでスキップできません。回答を入力してください。`;
+      return {
+        content: `${STATE_EMOJI.attention} この質問は必須なのでスキップできません。回答を入力してください。`,
+        components: onboardingCancelComponents(currentSession.id),
+        tag: 'onboard.answer.skip_required',
+      };
     }
   }
-  const updated = await collector.answerCurrent(session.id, answer);
+  const updated = await collector.answerCurrent(currentSession.id, answer);
   return renderUpdatedOnboardingSession(ctx, collector, updated);
 }
 
-async function renderUpdatedOnboardingSession(
+export async function renderUpdatedOnboardingSession(
   ctx: HandlerContext,
-  collector: OnboardingCollector,
+  collector: Pick<OnboardingCollector, 'finalize'>,
   updated: OnboardingSession,
-): Promise<string> {
+): Promise<HandlerResult> {
   if (updated.state === 'completed') {
     try {
       const finalize = await collector.finalize(updated.id);
@@ -188,32 +243,48 @@ async function renderUpdatedOnboardingSession(
       // The background task posts its own thread when ready, or escalates
       // to the operator on failure.
       void runBootstrapFirstDraftInBackground(ctx);
-      return [
-        `${STATE_EMOJI.ok} オンボーディング完了！ account.json を更新しました。`,
-        `- account_id: \`${finalize.account.account_id}\``,
-        `- display_name: ${finalize.account.display_name}`,
-        '',
-        phase,
-        '',
-        '日次運用開始。明朝 07:00 JST から自動で投稿候補が作られます。',
-        '\n📝 最初の投稿候補を作成中です…(まもなく別 thread で届きます)',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      return {
+        content: [
+          `${STATE_EMOJI.ok} オンボーディング完了！ account.json を更新しました。`,
+          `- account_id: \`${finalize.account.account_id}\``,
+          `- display_name: ${finalize.account.display_name}`,
+          '',
+          phase,
+          '',
+          '日次運用開始。明朝 07:00 JST から自動で投稿候補が作られます。',
+          '\n📝 最初の投稿候補を作成中です…(まもなく別 thread で届きます)',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        tag: 'onboard.answer.completed',
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return `${STATE_EMOJI.attention} 全質問の回答は保存しましたが、account.json への反映でエラー: ${message}`;
+      return {
+        content: `${STATE_EMOJI.attention} 全質問の回答は保存しましたが、account.json への反映でエラー: ${message}`,
+        tag: 'onboard.answer.finalize_failed',
+      };
     }
   }
   if (updated.state === 'expired') {
-    return '⌛ セッションが期限切れになりました。もう一度「最初から」と話しかけて再開してください。';
+    return {
+      content: '⌛ セッションが期限切れになりました。もう一度「最初から」と話しかけて再開してください。',
+      tag: 'onboard.answer.expired',
+    };
   }
   const nextQ = findQuestionById(updated.currentQuestionId);
   if (!nextQ) {
-    return '⚠️ 次の質問が見つかりませんでした。operator に連絡してください。';
+    return {
+      content: '⚠️ 次の質問が見つかりませんでした。operator に連絡してください。',
+      tag: 'onboard.answer.missing_question',
+    };
   }
   const idx = questionIndexFor(nextQ.id);
-  return renderOnboardingPrompt(updated, nextQ, Math.max(0, idx));
+  return {
+    content: renderOnboardingPrompt(updated, nextQ, Math.max(0, idx)),
+    components: onboardingPromptComponents(updated, nextQ),
+    tag: 'onboard.answer.next',
+  };
 }
 
 function renderOnboardingPrompt(
@@ -222,7 +293,9 @@ function renderOnboardingPrompt(
   index: number,
 ): string {
   const review = pendingReviewForQuestion(session, question.id);
-  return review ? renderReviewQuestion(review, index) : renderQuestion(question, index);
+  if (!review) return renderQuestion(question, index);
+  assertReviewQuestionId(review, question.id);
+  return renderReviewQuestion(review, index);
 }
 
 function renderReviewQuestion(
@@ -238,19 +311,69 @@ function renderReviewQuestion(
   ].join('\n');
 }
 
-type ReviewDecision = 'keep' | 'change';
+function assertReviewQuestionId(review: ResolvedQuestion, questionId: string): void {
+  if (review.id !== questionId) {
+    throw new Error(`review question mismatch: current=${questionId} review=${review.id}`);
+  }
+}
+
+export function onboardingCancelComponents(sessionId: string): ReadonlyArray<unknown> {
+  return [
+    {
+      type: 1,
+      components: [
+        { type: 2, custom_id: `onboard:cancel:${sessionId}`, label: 'やめる', style: 4 },
+      ],
+    },
+  ];
+}
+
+export function onboardingReviewComponents(sessionId: string): ReadonlyArray<unknown> {
+  return [
+    {
+      type: 1,
+      components: [
+        { type: 2, custom_id: `onboard:review:keep:${sessionId}`, label: '維持', style: 1 },
+        {
+          type: 2,
+          custom_id: `onboard:review:change:${sessionId}`,
+          label: '変更する',
+          style: 2,
+        },
+        { type: 2, custom_id: `onboard:review:cancel:${sessionId}`, label: 'やめる', style: 4 },
+      ],
+    },
+  ];
+}
+
+function onboardingPromptComponents(
+  session: OnboardingSession,
+  question: OnboardingQuestion,
+): ReadonlyArray<unknown> {
+  return pendingReviewForQuestion(session, question.id)
+    ? onboardingReviewComponents(session.id)
+    : onboardingCancelComponents(session.id);
+}
+
+type ReviewDecision =
+  | { action: 'keep' }
+  | { action: 'change' }
+  | { action: 'answer'; answer: unknown };
 
 async function classifyReviewDecision(
   bridge: LlmProvider,
   input: {
     questionId: string;
     question: string;
+    review: ResolvedQuestion;
     savedValueText: string;
     reply: string;
   },
 ): Promise<ReviewDecision | null> {
   const local = classifyReviewDecisionLocal(input.reply);
   if (local) return local;
+  const direct = classifyReviewDirectAnswer(input.review, input.reply);
+  if (direct) return direct;
   try {
     const response = await bridge.call({
       kind: 'onboarding_review_decision' as never,
@@ -262,7 +385,8 @@ async function classifyReviewDecision(
         customer_reply: input.reply,
       }),
     });
-    return classifyReviewDecisionFromLlmText(response.text);
+    const llm = classifyReviewDecisionFromLlmText(response.text);
+    return llm ? { action: llm } : null;
   } catch {
     return null;
   }
@@ -273,30 +397,78 @@ function classifyReviewDecisionLocal(reply: string): ReviewDecision | null {
   if (!text) return null;
   if (
     text === 'keep' ||
+    text === 'ok' ||
     text === 'no' ||
     text === 'n' ||
+    text === 'はい' ||
     text.includes('維持') ||
     text.includes('そのまま') ||
+    text.includes('現状') ||
     text.includes('変えない') ||
     text.includes('変更しない')
   ) {
-    return 'keep';
+    return { action: 'keep' };
   }
   if (
     text === 'change' ||
+    text === 'update' ||
     text === 'yes' ||
     text === 'y' ||
     text.includes('変更') ||
     text.includes('変える') ||
     text.includes('変えたい') ||
+    text.includes('直す') ||
+    text.includes('編集') ||
     text.includes('修正')
   ) {
-    return 'change';
+    return { action: 'change' };
   }
   return null;
 }
 
-function classifyReviewDecisionFromLlmText(raw: string): ReviewDecision | null {
+function classifyReviewDirectAnswer(
+  review: ResolvedQuestion,
+  reply: string,
+): ReviewDecision | null {
+  const text = reply.trim();
+  if (!text) return null;
+  if (normalizeReviewText(text) === normalizeReviewText(review.savedValueText)) {
+    return { action: 'keep' };
+  }
+  const question = review.question;
+  if (question.type !== 'select' && question.type !== 'multi-select') {
+    return null;
+  }
+  const replyKey = resolveChoiceKeyWithReviewAliases(question, text);
+  if (!replyKey) return null;
+  const savedKey =
+    typeof review.savedValue === 'string'
+      ? resolveChoiceKeyWithReviewAliases(question, review.savedValue)
+      : resolveChoiceKeyWithReviewAliases(question, review.savedValueText);
+  if (savedKey && savedKey === replyKey) {
+    return { action: 'keep' };
+  }
+  return { action: 'answer', answer: question.type === 'select' ? replyKey : text };
+}
+
+function resolveChoiceKeyWithReviewAliases(
+  question: OnboardingQuestion,
+  answer: string,
+): string | null {
+  const key = resolveChoiceKey(question, answer);
+  if (key) return key;
+  const normalized = normalizeReviewText(answer);
+  if (normalized === '中' && question.options?.some((opt) => opt.key === 'balanced')) {
+    return 'balanced';
+  }
+  return null;
+}
+
+function normalizeReviewText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function classifyReviewDecisionFromLlmText(raw: string): 'keep' | 'change' | null {
   const text = raw.trim().toLowerCase();
   if (!text) return null;
   try {
@@ -307,7 +479,8 @@ function classifyReviewDecisionFromLlmText(raw: string): ReviewDecision | null {
   } catch {
     // fall through to text matching
   }
-  return classifyReviewDecisionLocal(text);
+  const local = classifyReviewDecisionLocal(text)?.action ?? null;
+  return local === 'keep' || local === 'change' ? local : null;
 }
 
 async function startOnboardingPhaseBridge(ctx: HandlerContext): Promise<string> {

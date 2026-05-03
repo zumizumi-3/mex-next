@@ -206,9 +206,11 @@ export class IntentDrivenRunner implements ConversationRunner {
         if (!wantsCancel && !wantsStatus) {
           const reply = await applyFreeFormAnswer(turnHandlerContext, active, userText);
           return {
-            output: reply,
+            output: reply.content,
+            ...(reply.components ? { components: reply.components } : {}),
             metadata: {
               intent: 'onboard.answer',
+              tag: reply.tag ?? null,
               session_id: active.id,
               question_id: active.currentQuestionId,
             },
