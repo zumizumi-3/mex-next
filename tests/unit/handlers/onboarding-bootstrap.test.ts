@@ -78,6 +78,7 @@ async function setup(opts: {
     async searchRecent() { return []; },
     async getUserTweets() { return []; },
     async getUserByHandle(handle) { return { id: 'u1', name: 't', handle }; },
+    async getTrends() { return []; },
     async deleteTweet() { return undefined; },
     async likeTweet() { return undefined; },
   };

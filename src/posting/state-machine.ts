@@ -31,9 +31,11 @@ import {
 import { type Candidate, validateCandidate } from './candidate.js';
 import { buildContextIndex, type ContextIndex } from './context-index.js';
 import { generateDraft } from './draft-generation.js';
+import { buildNewsContext, type NewsContext } from './news-context.js';
 import { judgeQuality } from './quality-judge.js';
 import { computeEditDiff } from './edit-diff.js';
 import type { ExemplarRecord, ExemplarWriter } from './exemplar-writer.js';
+import type { XApiSurface } from '../x-api/types.js';
 
 /** Customer decision on a draft. */
 export type PostingDecision = 'schedule' | 'revise' | 'reject';
@@ -213,6 +215,7 @@ export interface PostingStateMachineOptions {
    */
   onQualityJudged?: (info: { sessionId: string; pass: boolean; axes: Record<string, number> }) => void;
   exemplarWriter?: Pick<ExemplarWriter, 'write'>;
+  xApi?: XApiSurface;
 }
 
 /**
@@ -227,6 +230,7 @@ export class PostingStateMachine {
   private readonly clock: () => Date;
   private readonly onQualityJudged: PostingStateMachineOptions['onQualityJudged'];
   private readonly exemplarWriter?: Pick<ExemplarWriter, 'write'>;
+  private readonly xApi?: XApiSurface;
 
   constructor(opts: PostingStateMachineOptions) {
     this.repo = opts.repo;
@@ -236,6 +240,7 @@ export class PostingStateMachine {
     this.clock = opts.clock ?? (() => new Date());
     this.onQualityJudged = opts.onQualityJudged;
     this.exemplarWriter = opts.exemplarWriter;
+    this.xApi = opts.xApi;
   }
 
   private nowIso(): string {
@@ -358,10 +363,12 @@ export class PostingStateMachine {
     // Step 2: LLM call OUTSIDE the lock — the bridge can take seconds
     let candidate: Candidate;
     try {
+      const newsContext = await this.loadNewsContext();
       candidate = await generateDraft({
         contextIndex: generating.contextIndex!,
         bridge: this.bridge,
         ...(generating.topic.length > 0 ? { topic: generating.topic } : {}),
+        newsContext,
       });
     } catch (error: unknown) {
       this.logger?.error(
@@ -390,6 +397,19 @@ export class PostingStateMachine {
       };
       return { state: upsertSession(state, next), result: next };
     });
+  }
+
+  private async loadNewsContext(): Promise<NewsContext> {
+    try {
+      const account = await this.repo.loadAccount();
+      const rawSources = (account as Record<string, unknown>).news_sources;
+      const sources = Array.isArray(rawSources)
+        ? rawSources.filter((source): source is string => typeof source === 'string' && source.length > 0)
+        : undefined;
+      return await buildNewsContext({ sources, xApi: this.xApi, limit: 10 });
+    } catch {
+      return { trends: [], articles: [] };
+    }
   }
 
   /**

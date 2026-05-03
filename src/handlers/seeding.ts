@@ -44,6 +44,7 @@ export async function handleSeedRun(
       repo: ctx.repo,
       bridge: ctx.bridge,
       logger: ctx.logger,
+      ...(ctx.xApi ? { xApi: ctx.xApi } : {}),
       request: {
         count,
         approveAll,

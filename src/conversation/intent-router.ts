@@ -51,6 +51,7 @@ export type IntentName =
   | 'phase.questionnaire_status'
   | 'system.update'
   | 'system.regenerate_knowledge'
+  | 'news.show'
   | 'unknown';
 
 export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
@@ -79,6 +80,7 @@ export const SUPPORTED_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'phase.questionnaire_status',
   'system.update',
   'system.regenerate_knowledge',
+  'news.show',
   'unknown',
 ]);
 
@@ -113,6 +115,7 @@ export const DISPLAY_INTENTS: ReadonlySet<IntentName> = new Set<IntentName>([
   'automation.status',
   'status.show',
   'help.show',
+  'news.show',
   'onboard.status',
   'phase.questionnaire_status',
 ]);

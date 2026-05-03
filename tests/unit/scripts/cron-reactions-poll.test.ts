@@ -152,6 +152,7 @@ function makeXApi(opts: XApiMockOpts = {}): XApiSurface {
       const id = handle === 'zumi_x' ? 'u-self' : `u-target-${handle.replace(/^u-/, '')}`;
       return { id, name: handle, handle };
     }),
+    getTrends: vi.fn(async () => []),
     deleteTweet: vi.fn(async () => undefined),
     likeTweet: vi.fn(async () => undefined),
   };

@@ -1,6 +1,8 @@
 import type { HandlerContext } from '../handlers/types.js';
 import type { PublishItem } from '../account-state/state-schema.js';
 import type { AgentStateSnapshot } from './agent-loop.js';
+import { fetchNewsContext } from '../posting/news-context.js';
+import type { XTrend } from '../x-api/types.js';
 
 const ACTIVE_STATUSES = new Set(['scheduled', 'held']);
 const AUTOMATION_GATES = [
@@ -13,6 +15,10 @@ const AUTOMATION_GATES = [
 
 export async function buildStateSnapshot(ctx: HandlerContext): Promise<AgentStateSnapshot> {
   const [state, account] = await Promise.all([ctx.repo.loadState(), ctx.repo.loadAccount()]);
+  const [trends, articles] = await Promise.all([
+    withTimeout(loadTrends(ctx), [], 5_000),
+    withTimeout(fetchNewsContext(newsSources(account)), [], 5_000),
+  ]);
   const queue = Array.isArray(state.publish_queue) ? state.publish_queue : [];
   const active = queue.filter((item) => ACTIVE_STATUSES.has(String(item.status)));
   const today = jstDateString(new Date());
@@ -49,7 +55,46 @@ export async function buildStateSnapshot(ctx: HandlerContext): Promise<AgentStat
       account_id: stringField(account.account_id) || ctx.accountId,
       display_name: stringField(account.display_name),
     },
+    news: {
+      trends: trends.slice(0, 10).map((trend) => ({
+        name: trend.name,
+        ...(trend.tweet_volume !== undefined ? { volume: trend.tweet_volume } : {}),
+      })),
+      articles: articles.slice(0, 10).map((article) => ({
+        title: article.title,
+        url: article.url,
+        source: article.source,
+      })),
+    },
   };
+}
+
+async function loadTrends(ctx: HandlerContext): Promise<XTrend[]> {
+  if (!ctx.xApi) return [];
+  try {
+    return await ctx.xApi.getTrends();
+  } catch {
+    return [];
+  }
+}
+
+function newsSources(account: Awaited<ReturnType<HandlerContext['repo']['loadAccount']>>): string[] {
+  const sources = (account as Record<string, unknown>).news_sources;
+  return Array.isArray(sources)
+    ? sources.filter((source): source is string => typeof source === 'string' && source.length > 0)
+    : [];
+}
+
+async function withTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeout = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise.catch(() => fallback), timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function buildQueueSamples(

@@ -22,6 +22,7 @@ import {
   type PostOptions,
   type PostResult,
   type TweetEvent,
+  type XTrend,
   type XApiCredentials,
   type XApiSurface,
   type XUser,
@@ -31,6 +32,7 @@ import {
 const DEFAULT_MAX_RESULTS = 25;
 const MIN_TWITTER_MAX_RESULTS = 5;
 const MAX_TWITTER_MAX_RESULTS = 100;
+const DEFAULT_TRENDS_WOEID = 23424856;
 
 const TWEET_FIELDS = ['created_at', 'author_id', 'conversation_id', 'referenced_tweets'] as const;
 const USER_FIELDS = ['id', 'name', 'username'] as const;
@@ -203,6 +205,25 @@ export class XApiClient implements XApiSurface {
     });
   }
 
+  async getTrends(opts: { woeid?: number } = {}): Promise<XTrend[]> {
+    const woeid = opts.woeid ?? DEFAULT_TRENDS_WOEID;
+    try {
+      const v1 = (this.api as unknown as TwitterApiV1Surface).v1;
+      if (!v1) return [];
+      let raw: unknown;
+      if (typeof v1.trendsByPlace === 'function') {
+        raw = await v1.trendsByPlace(woeid);
+      } else if (typeof v1.get === 'function') {
+        raw = await v1.get('trends/place.json', { id: woeid });
+      } else {
+        return [];
+      }
+      return parseTrendsPayload(raw);
+    } catch {
+      return [];
+    }
+  }
+
   async deleteTweet(id: string): Promise<void> {
     await this.runWithRetry('delete', async () => {
       await this.api.v2.deleteTweet(id);
@@ -297,6 +318,40 @@ function clampMaxResults(max: number | undefined): number {
 interface RawListPayload {
   data?: TweetV2[] | TweetV2;
   includes?: { users?: UserV2[] };
+}
+
+interface TwitterApiV1Surface {
+  v1?: {
+    trendsByPlace?: (woeid: number) => Promise<unknown>;
+    get?: (endpoint: string, params?: Record<string, unknown>) => Promise<unknown>;
+  };
+}
+
+interface RawTrend {
+  name?: unknown;
+  tweet_volume?: unknown;
+}
+
+function parseTrendsPayload(raw: unknown): XTrend[] {
+  const container = Array.isArray(raw) ? raw[0] : raw;
+  if (!container || typeof container !== 'object') return [];
+  const trends = (container as { trends?: unknown }).trends;
+  if (!Array.isArray(trends)) return [];
+  const result: XTrend[] = [];
+  for (const trend of trends) {
+    if (!trend || typeof trend !== 'object') continue;
+    const rawTrend = trend as RawTrend;
+    if (typeof rawTrend.name !== 'string' || rawTrend.name.trim().length === 0) continue;
+    const item: XTrend = {
+      name: rawTrend.name.trim(),
+      rank: result.length + 1,
+    };
+    if (typeof rawTrend.tweet_volume === 'number' && Number.isFinite(rawTrend.tweet_volume)) {
+      item.tweet_volume = rawTrend.tweet_volume;
+    }
+    result.push(item);
+  }
+  return result;
 }
 
 /**

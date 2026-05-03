@@ -19,9 +19,16 @@ interface FakeApi {
     userByUsername: ReturnType<typeof vi.fn>;
     deleteTweet: ReturnType<typeof vi.fn>;
   };
+  v1: {
+    trendsByPlace: ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
+  };
 }
 
-function makeFakeApi(overrides: Partial<FakeApi['v2']> = {}): FakeApi {
+function makeFakeApi(
+  overrides: Partial<FakeApi['v2']> = {},
+  v1Overrides: Partial<FakeApi['v1']> = {},
+): FakeApi {
   return {
     v2: {
       me: vi.fn().mockResolvedValue({ data: { id: 'me-1' } }),
@@ -32,6 +39,11 @@ function makeFakeApi(overrides: Partial<FakeApi['v2']> = {}): FakeApi {
       userByUsername: vi.fn().mockResolvedValue({ data: { id: 'u-1', username: 'foo', name: 'Foo' } }),
       deleteTweet: vi.fn().mockResolvedValue({}),
       ...overrides,
+    },
+    v1: {
+      trendsByPlace: vi.fn().mockResolvedValue([{ trends: [] }]),
+      get: vi.fn().mockResolvedValue([{ trends: [] }]),
+      ...v1Overrides,
     },
   };
 }
@@ -192,6 +204,41 @@ describe('XApiClient.getUserByHandle', () => {
     const api = makeFakeApi();
     const client = makeClient(api);
     await expect(client.getUserByHandle('   ')).rejects.toBeInstanceOf(XApiError);
+  });
+});
+
+describe('XApiClient.getTrends', () => {
+  it('parses v1 trendsByPlace response with rank and volume', async () => {
+    const api = makeFakeApi(
+      {},
+      {
+        trendsByPlace: vi.fn().mockResolvedValue([
+          {
+            trends: [
+              { name: '#AI', tweet_volume: 12345 },
+              { name: 'Product Hunt', tweet_volume: null },
+            ],
+          },
+        ]),
+      },
+    );
+    const client = makeClient(api);
+    await expect(client.getTrends()).resolves.toEqual([
+      { name: '#AI', tweet_volume: 12345, rank: 1 },
+      { name: 'Product Hunt', rank: 2 },
+    ]);
+    expect(api.v1.trendsByPlace).toHaveBeenCalledWith(23424856);
+  });
+
+  it('returns [] when trends fetch fails', async () => {
+    const api = makeFakeApi(
+      {},
+      {
+        trendsByPlace: vi.fn().mockRejectedValue({ code: 429, message: 'rate' }),
+      },
+    );
+    const client = makeClient(api);
+    await expect(client.getTrends()).resolves.toEqual([]);
   });
 });
 

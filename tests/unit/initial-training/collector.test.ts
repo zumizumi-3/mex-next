@@ -91,6 +91,9 @@ function makeXApi(tweets: TweetEvent[]): XApiSurface {
     async getUserByHandle(handle) {
       return { id: 'user_1', name: 'test', handle };
     },
+    async getTrends() {
+      return [];
+    },
     async deleteTweet() {
       return undefined;
     },

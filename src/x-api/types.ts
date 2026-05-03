@@ -57,6 +57,12 @@ export interface XUser {
   handle: string;
 }
 
+export interface XTrend {
+  name: string;
+  tweet_volume?: number;
+  rank: number;
+}
+
 export interface PaginationOptions {
   sinceId?: string;
   max?: number;
@@ -73,6 +79,7 @@ export interface XApiSurface {
   searchRecent(query: string, opts?: PaginationOptions): Promise<TweetEvent[]>;
   getUserTweets(userId: string, opts?: PaginationOptions): Promise<TweetEvent[]>;
   getUserByHandle(handle: string): Promise<XUser>;
+  getTrends(opts?: { woeid?: number }): Promise<XTrend[]>;
   deleteTweet(id: string): Promise<void>;
   /** Like a tweet on behalf of the authenticated user. */
   likeTweet(tweetId: string): Promise<void>;

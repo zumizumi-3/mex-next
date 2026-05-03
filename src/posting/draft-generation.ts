@@ -14,6 +14,7 @@ import { ulid } from 'ulid';
 import type { LlmProvider } from './types.js';
 import type { ContextIndex } from './context-index.js';
 import type { Candidate } from './candidate.js';
+import { formatNewsContextForPrompt, type NewsContext } from './news-context.js';
 
 export const POST_V2_GENERATE_KIND = 'post_v2_generate';
 
@@ -61,6 +62,7 @@ function buildPayload(opts: {
   contextIndex: ContextIndex;
   topic?: string;
   retryHint?: string;
+  newsContext?: NewsContext;
 }): Record<string, unknown> {
   const ci = opts.contextIndex;
   return {
@@ -76,6 +78,8 @@ function buildPayload(opts: {
       failed_topics: ci.recentMemory.failedTopics,
     },
     exemplars: ci.exemplars,
+    today_reference_info: opts.newsContext ? formatNewsContextForPrompt(opts.newsContext) : '',
+    news: opts.newsContext ?? { trends: [], articles: [] },
     retry_hint: opts.retryHint ?? '',
     contract: {
       return_json_keys: ['text'],
@@ -97,6 +101,7 @@ export async function generateDraft(opts: {
   contextIndex: ContextIndex;
   bridge: LlmProvider;
   topic?: string;
+  newsContext?: NewsContext;
   /** Optional hint from a previous failed judge attempt. */
   retryHint?: string;
 }): Promise<Candidate> {
@@ -104,6 +109,7 @@ export async function generateDraft(opts: {
     contextIndex: opts.contextIndex,
     ...(opts.topic !== undefined ? { topic: opts.topic } : {}),
     ...(opts.retryHint !== undefined ? { retryHint: opts.retryHint } : {}),
+    ...(opts.newsContext !== undefined ? { newsContext: opts.newsContext } : {}),
   });
   const response = await opts.bridge.generate({
     kind: POST_V2_GENERATE_KIND,

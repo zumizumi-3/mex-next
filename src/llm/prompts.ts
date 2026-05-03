@@ -45,6 +45,7 @@ export const SUPPORTED_INTENT_NAMES: readonly string[] = [
   'phase.questionnaire_status',
   'system.update',
   'system.regenerate_knowledge',
+  'news.show',
   'unknown',
 ] as const;
 
@@ -71,6 +72,7 @@ const INTENT_ARG_SCHEMA_LINES = [
   "phase.questionnaire_start = {cadence?: 'weekly'|'monthly'|'quarterly'}",
   "phase.questionnaire_status = {cadence?: 'weekly'|'monthly'|'quarterly', session_id?: string}",
   'system.regenerate_knowledge = no args',
+  'news.show = no args',
   'unknown = no args (use this when the request is unclear)',
 ];
 
@@ -79,7 +81,7 @@ const INTENT_RULES = [
     'deletes, immediately publishes, or globally changes automation. Examples: schedule.cancel, ' +
     'schedule.publish_now, cadence.skip_today, automation.enable_all, target.remove, cadence.set_*, system.regenerate_knowledge',
   'Confirmation is NOT required for display-only intents: schedule.list, schedule.detail, ' +
-    'target.list, automation.status, status.show, help.show, onboard.status.',
+    'target.list, automation.status, status.show, help.show, news.show, onboard.status.',
   'onboard.cancel REQUIRES confirmation. onboard.start does NOT need confirmation.',
   'When confirmation_needed=true, ALWAYS include a short Japanese confirmation_message ' +
     '(1 sentence, ends with a question mark).',
@@ -112,13 +114,14 @@ export const AGENT_LOOP_SYSTEM = [
   'ルール:',
   '- reply では顧客の語彙を必ず echo する。「全部取り消して」と言われたら reply にも「全部」を含め、"全部=過去含む active 全件" のように解釈を明示する。',
   '- read-only な依頼 (一覧/状態/ヘルプ/詳細確認) は tool_call=null にし、state snapshot から reply に直接表現する。',
+  '- state.news.trends は X の今日のトレンド (上位 10)、state.news.articles は今日参考にしているニュース。draft 生成や提案で、関連するときだけ自然に使ってよい。',
   '- 取り消し・投稿・変更・開始など destructive tool は needs_confirmation=true。reply で「○○ N 件を取り消します。実行しますか?」のように件数を必ず明示する。',
   '- destructive tool は確認 text なしで tool_call を出してはいけない。tool は次 turn で承認後に実際に走る。',
   '- 曖昧なら聞き返す。「過去含めて全部か、今日だけか?」「topic を教えてください」など、型に押し込めず自然な対話で意図を絞ること。',
   '- state.queue.today_active / past_active / total_active を見る。「全部」は past+today を含む active 全件、「今日だけ」は today のみとして判断する。',
   '- 出力は日本語、Discord 向け 1〜4 文。絵文字は ✅ 🛑 ⏳ ❌ ⚠️ 🗓️ から選ぶ。',
   '',
-  'tool_call に指定できる mutating tool:',
+  'tool_call に指定できる tool:',
   '- cancel_publish_items: 予約の単体・今日全部・過去含む全部の取消。',
   '- publish_now: publish_id または時刻指定の予約を今すぐ投稿。',
   '- add_target_handle: X handle を追跡対象に追加。',
@@ -133,6 +136,7 @@ export const AGENT_LOOP_SYSTEM = [
   '- run_training: 過去投稿取り込みと voice 学習。',
   '- start_phase_questionnaire: weekly/monthly/quarterly アンケート開始。',
   '- run_system_update: operator 専用の自己更新。',
+  '- show_news_context: 今日参考にしているニュース一覧と X トレンドを表示。',
   '- regenerate_knowledge: operator 専用の knowledge files 再生成。',
 ].join('\n');
 

@@ -36,6 +36,7 @@ import { asPostingMachineRepo } from '../handlers/repo-adapter.js';
 import { createDiscordClient } from '../discord/client.js';
 import { DiscordPosterImpl } from '../discord/poster.js';
 import { escalateOperator } from '../automation/operator-escalation.js';
+import { XApiClient, type XApiSurface } from '../x-api/index.js';
 
 interface DailyAutoPostDeps {
   readonly config: AppConfig;
@@ -47,6 +48,7 @@ interface DailyAutoPostDeps {
   readonly now?: () => Date;
   /** Topic generator (default: short JST date string). */
   readonly topicFor?: (now: Date) => string;
+  readonly xApi?: XApiSurface;
 }
 
 export type DailyAutoPostOutcome =
@@ -118,6 +120,7 @@ export async function runDailyAutoPost(deps: DailyAutoPostDeps): Promise<DailyAu
     repo: asPostingMachineRepo(repo),
     bridge: adapted,
     logger,
+    ...(deps.xApi ? { xApi: deps.xApi } : {}),
   });
 
   let session;
@@ -280,6 +283,7 @@ async function main(): Promise<void> {
   const log = createLogger({ level: config.logLevel });
   const repo = new AccountRepo(config.accountRepo);
   const bridge = buildBridge(config);
+  const xApi = buildXApi(config);
   const client = createDiscordClient({ logger: log });
   const poster = new DiscordPosterImpl(client, {
     channelMap: config.discordChannelMap,
@@ -289,7 +293,7 @@ async function main(): Promise<void> {
   let outcome: DailyAutoPostOutcome;
   try {
     await client.login(config.discordBotToken);
-    outcome = await runDailyAutoPost({ config, repo, bridge, poster, logger: log });
+    outcome = await runDailyAutoPost({ config, repo, bridge, poster, logger: log, ...(xApi ? { xApi } : {}) });
   } finally {
     try {
       await client.destroy();
@@ -300,6 +304,23 @@ async function main(): Promise<void> {
 
   log.info({ outcome }, 'cron_daily_auto_post.done');
   process.exit(outcome.kind === 'fail' ? 1 : 0);
+}
+
+function buildXApi(config: AppConfig): XApiSurface | undefined {
+  if (
+    !config.xApiConsumerKey ||
+    !config.xApiConsumerSecret ||
+    !config.xApiAccessToken ||
+    !config.xApiAccessTokenSecret
+  ) {
+    return undefined;
+  }
+  return new XApiClient({
+    consumerKey: config.xApiConsumerKey,
+    consumerSecret: config.xApiConsumerSecret,
+    accessToken: config.xApiAccessToken,
+    accessTokenSecret: config.xApiAccessTokenSecret,
+  });
 }
 
 const isMain = (() => {
