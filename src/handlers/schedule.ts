@@ -192,6 +192,41 @@ export async function handleScheduleList(
   return { content: sections.join('\n\n'), tag: 'schedule.list' };
 }
 
+export async function handleQueueSummary(
+  ctx: HandlerContext,
+  _args: HandlerArgs,
+): Promise<HandlerResult> {
+  const state = await ctx.repo.loadState();
+  const queue: PublishItem[] = (state.publish_queue ?? []) as unknown as PublishItem[];
+  const today = jstDateString(new Date());
+  let todayActive = 0;
+  let pastActive = 0;
+  let totalActive = 0;
+
+  for (const item of queue) {
+    if (!isActive(item)) continue;
+    totalActive += 1;
+    if (!item.scheduled_at) continue;
+    const when = new Date(item.scheduled_at);
+    if (Number.isNaN(when.getTime())) continue;
+    const day = jstDateString(when);
+    if (day === today) {
+      todayActive += 1;
+    } else if (day < today) {
+      pastActive += 1;
+    }
+  }
+
+  return {
+    content: JSON.stringify({
+      today_active: todayActive,
+      past_active: pastActive,
+      total_active: totalActive,
+    }),
+    tag: 'queue.summary',
+  };
+}
+
 function findItem(queue: PublishItem[], args: HandlerArgs): PublishItem | undefined {
   const publishId = String(args.publish_id ?? '').trim();
   if (publishId) {

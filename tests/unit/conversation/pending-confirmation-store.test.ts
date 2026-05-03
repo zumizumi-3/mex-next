@@ -54,6 +54,19 @@ describe('createPendingConfirmationStore', () => {
     });
     expect(store.get('c1')?.intent).toBe('cadence.skip_today');
   });
+
+  it('round-trips a tool pending entry', () => {
+    const store = createPendingConfirmationStore();
+    store.set({
+      conversationKey: 'c1',
+      pendingTool: { name: 'cancel_publish_items', input: { scope: 'all' } },
+      promptShown: 'really?',
+    });
+    expect(store.get('c1')?.pendingTool).toEqual({
+      name: 'cancel_publish_items',
+      input: { scope: 'all' },
+    });
+  });
 });
 
 describe('classifyConfirmationReply', () => {

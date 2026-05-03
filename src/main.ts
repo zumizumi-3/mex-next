@@ -254,6 +254,14 @@ async function main(): Promise<void> {
     );
   const bridge = await buildLlmBridge(config, log, poster);
   const xApi = buildXApiClient(config, log, poster);
+  const agentLoopEnabled = process.env.MEX_AGENT_LOOP_ENABLED === '1';
+  const agentLoopAnthropic =
+    agentLoopEnabled && config.anthropicApiKey
+      ? new Anthropic({ apiKey: config.anthropicApiKey })
+      : undefined;
+  if (agentLoopEnabled && !agentLoopAnthropic) {
+    log.warn('agent_loop_disabled_missing_anthropic_key');
+  }
 
   const judgmentEvents = new JudgmentEventStream({
     filePath: config.judgmentEventsPath,
@@ -276,7 +284,17 @@ async function main(): Promise<void> {
     ...(xApi ? { xApi } : {}),
   };
 
-  const runner = new IntentDrivenRunner({ bridge, handlers, handlerContext });
+  const runner = new IntentDrivenRunner({
+    bridge,
+    handlers,
+    handlerContext,
+    agentLoop: agentLoopAnthropic
+      ? {
+          anthropic: agentLoopAnthropic,
+          model: 'claude-opus-4-7',
+        }
+      : undefined,
+  });
 
   // Auto-derive allowed channels from the role mapping. Customers should
   // never have to @mention the bot in their own designated channel — if

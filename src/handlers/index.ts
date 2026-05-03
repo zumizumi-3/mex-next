@@ -15,6 +15,7 @@ import {
   handleScheduleCancel,
   handleSchedulePublishNow,
   handleScheduleDetail,
+  handleQueueSummary,
 } from './schedule.js';
 import { handlePostCreate } from './post.js';
 import { handleTargetAdd, handleTargetList, handleTargetRemove } from './target.js';
@@ -43,6 +44,7 @@ export {
   handleScheduleCancel,
   handleSchedulePublishNow,
   handleScheduleDetail,
+  handleQueueSummary,
   handlePostCreate,
   handleTargetAdd,
   handleTargetList,

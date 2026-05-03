@@ -33,11 +33,16 @@ import {
   createPendingConfirmationStore,
   type PendingConfirmationStore,
 } from './pending-confirmation-store.js';
+import type Anthropic from '@anthropic-ai/sdk';
+import { TOOL_SPECS } from '../handlers/tool-specs.js';
+import { runAgentLoop, type AgentLoopResult } from '../llm/agent-loop.js';
+import { AGENT_LOOP_SYSTEM } from '../llm/prompts.js';
 
 export interface IntentDrivenRunnerOptions {
   bridge: LlmProvider;
   handlers: HandlersMap;
   handlerContext: HandlerContext;
+  agentLoop?: { anthropic: Anthropic; model: string };
   /** Pending confirmation store. Defaults to an in-memory store. */
   pendingConfirmations?: PendingConfirmationStore;
 }
@@ -86,6 +91,7 @@ export class IntentDrivenRunner implements ConversationRunner {
   private readonly bridge: LlmProvider;
   private readonly handlers: HandlersMap;
   private readonly handlerContext: HandlerContext;
+  private readonly agentLoop?: { anthropic: Anthropic; model: string };
 
   private readonly pendingConfirmations: PendingConfirmationStore;
 
@@ -93,6 +99,7 @@ export class IntentDrivenRunner implements ConversationRunner {
     this.bridge = opts.bridge;
     this.handlers = opts.handlers;
     this.handlerContext = opts.handlerContext;
+    this.agentLoop = opts.agentLoop;
     this.pendingConfirmations = opts.pendingConfirmations ?? createPendingConfirmationStore();
   }
 
@@ -132,9 +139,25 @@ export class IntentDrivenRunner implements ConversationRunner {
       const verdict = classifyConfirmationReply(userText);
       if (verdict === 'affirmative') {
         this.pendingConfirmations.delete(input.conversationKey);
+        if (pending.pendingTool && this.agentLoop) {
+          return this.runAgentLoopAndDispatch({
+            userText,
+            turnHandlerContext,
+            abortSignal,
+            onStatus,
+            conversationKey: input.conversationKey,
+            pendingApproval: {
+              toolName: pending.pendingTool.name,
+              toolInput: pending.pendingTool.input,
+            },
+          });
+        }
+        if (!pending.intent) {
+          return { output: '内部エラー: pending confirmation が壊れています。' };
+        }
         const resolved: IntentResult = {
           intent: pending.intent,
-          args: pending.args,
+          args: pending.args ?? {},
           confirmationNeeded: false,
         };
         return this.dispatch(resolved, onStatus, turnHandlerContext);
@@ -186,6 +209,113 @@ export class IntentDrivenRunner implements ConversationRunner {
       );
     }
 
+    if (this.agentLoop) {
+      return this.runAgentLoopAndDispatch({
+        userText,
+        turnHandlerContext,
+        abortSignal,
+        onStatus,
+        conversationKey: input.conversationKey,
+      });
+    }
+
+    return this.runLegacyIntent(userText, turnHandlerContext, abortSignal, turnId, onStatus, input);
+  }
+
+  private async runAgentLoopAndDispatch(input: {
+    userText: string;
+    turnHandlerContext: HandlerContext;
+    abortSignal: AbortSignal;
+    onStatus?: StatusCallback;
+    conversationKey: string;
+    pendingApproval?: { toolName: string; toolInput: Record<string, unknown> };
+  }): Promise<TurnResult> {
+    if (!this.agentLoop) {
+      return this.runLegacyIntent(
+        input.userText,
+        input.turnHandlerContext,
+        input.abortSignal,
+        'agent-loop-disabled',
+        input.onStatus,
+        { conversationKey: input.conversationKey },
+      );
+    }
+    await safeStatus(input.onStatus, '🧠 状況を確認中…');
+    let result: AgentLoopResult;
+    try {
+      result = await runAgentLoop({
+        anthropic: this.agentLoop.anthropic,
+        model: this.agentLoop.model,
+        systemPrompt: AGENT_LOOP_SYSTEM,
+        toolSpecs: TOOL_SPECS,
+        handlerContext: input.turnHandlerContext,
+        userMessage: input.userText,
+        pendingApproval: input.pendingApproval,
+        abortSignal: input.abortSignal,
+        logger: input.turnHandlerContext.logger,
+      });
+    } catch (error) {
+      input.turnHandlerContext.logger.warn?.(
+        { error: error instanceof Error ? error.message : String(error) },
+        'agent_loop_failed_falling_back_to_legacy',
+      );
+      return this.runLegacyIntent(
+        input.userText,
+        input.turnHandlerContext,
+        input.abortSignal,
+        'agent-loop-fallback',
+        input.onStatus,
+        { conversationKey: input.conversationKey },
+      );
+    }
+
+    if (result.fallbackToLegacy) {
+      return this.runLegacyIntent(
+        input.userText,
+        input.turnHandlerContext,
+        input.abortSignal,
+        'agent-loop-legacy-fallback',
+        input.onStatus,
+        { conversationKey: input.conversationKey },
+      );
+    }
+
+    if (result.awaitingApproval) {
+      this.pendingConfirmations.set({
+        conversationKey: input.conversationKey,
+        pendingTool: {
+          name: result.awaitingApproval.toolName,
+          input: result.awaitingApproval.toolInput,
+        },
+        promptShown: result.awaitingApproval.promptShown,
+      });
+      return {
+        output: result.awaitingApproval.promptShown,
+        metadata: {
+          awaitingConfirmation: true,
+          pendingTool: result.awaitingApproval.toolName,
+          toolInput: result.awaitingApproval.toolInput,
+          agentLoop: true,
+        },
+      };
+    }
+
+    return {
+      output: result.reply,
+      metadata: { agentLoop: true, trace: result.trace, usage: result.usage },
+    };
+  }
+
+  private async runLegacyIntent(
+    userText: string,
+    turnHandlerContext: HandlerContext,
+    abortSignal: AbortSignal,
+    turnId: string,
+    onStatus?: StatusCallback,
+    runnerInput?: { conversationKey: string },
+  ): Promise<TurnResult> {
+    await safeStatus(onStatus, '🧭 意図を解釈中…');
+
     const judgmentEvents = turnHandlerContext.judgmentEvents;
     const accountId = turnHandlerContext.accountId;
     const intent: IntentResult = await classifyIntent({
@@ -219,7 +349,7 @@ export class IntentDrivenRunner implements ConversationRunner {
         '実行してよろしいですか？「はい」と書いていただければ実行します。';
       // Park the pending intent so a follow-up "はい" actually runs it.
       this.pendingConfirmations.set({
-        conversationKey: input.conversationKey,
+        conversationKey: runnerInput?.conversationKey ?? accountId,
         intent: intent.intent,
         args: intent.args ?? {},
         promptShown: promptText,

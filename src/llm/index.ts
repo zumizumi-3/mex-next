@@ -36,6 +36,8 @@ export {
   KIND_SYSTEM_PROMPT,
   SUPPORTED_INTENT_NAMES,
   INTENT_FEW_SHOTS,
+  AGENT_LOOP_LEGACY_FALLBACK,
+  AGENT_LOOP_SYSTEM,
   buildIntentUserPrompt,
 } from './prompts.js';
 

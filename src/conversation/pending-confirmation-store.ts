@@ -26,8 +26,9 @@ export const DEFAULT_PENDING_TTL_MS = 5 * 60 * 1000;
 
 export interface PendingConfirmation {
   readonly conversationKey: string;
-  readonly intent: IntentName;
-  readonly args: Record<string, unknown>;
+  readonly intent?: IntentName;
+  readonly args?: Record<string, unknown>;
+  readonly pendingTool?: { readonly name: string; readonly input: Record<string, unknown> };
   readonly createdAt: number;
   readonly expiresAt: number;
   /** The exact prompt the bot showed — useful for the audit trail. */
